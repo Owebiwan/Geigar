@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, type AppConfig } from "./api/client";
 import { useTelemetry } from "./api/useTelemetry";
+import { Segmented } from "./components/Controls";
 import { TabBar, type Tab } from "./components/TabBar";
 import { berlinDate, berlinTime, shiftDay } from "./format";
+import { useI18n, type Lang } from "./i18n";
 import { Backtest } from "./screens/Backtest";
 import { Command } from "./screens/Command";
 import { Schedule } from "./screens/Schedule";
@@ -21,6 +23,7 @@ function usePhone(): boolean {
 }
 
 export function App() {
+  const { lang, setLang, t } = useI18n();
   const [tab, setTab] = useState<Tab>("COMMAND");
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [day, setDay] = useState(() => shiftDay(berlinDate(Date.now()), 1));
@@ -65,9 +68,12 @@ export function App() {
         <span className="rule" aria-hidden="true" />
         <span className="codes" role="status">
           <span className={`dot ${fault ? "fault" : online ? "on pulse" : ""}`} aria-hidden="true" />
-          {!connected ? "API OFFLINE" : !online ? "CONTROLLER OFFLINE" : fault ? "FAULT" : "ONLINE"}
+          {t(!connected ? "API OFFLINE" : !online ? "CONTROLLER OFFLINE" : fault ? "FAULT"
+            : "ONLINE")}
           {live?.ts ? ` · ${berlinDate(live.ts)} ${berlinTime(live.ts)}` : ""}
         </span>
+        <Segmented<Lang> label={t("Language")} value={lang} onChange={setLang}
+          options={[{ value: "en", label: "EN" }, { value: "de", label: "DE" }]} />
       </header>
 
       <main id="screen" role="tabpanel" aria-labelledby={`tab-${screen}`}>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { num, signed } from "../format";
+import { useT } from "../i18n";
 
 interface SegmentedProps<T extends string | number> {
   label: string;
@@ -36,6 +37,7 @@ export function Segmented<T extends string | number>(p: SegmentedProps<T>) {
 export function StopButton({ stopped, onStop, onResume, disabled }: {
   stopped: boolean; onStop: () => void; onResume: () => void; disabled?: boolean;
 }) {
+  const t = useT();
   const [armed, setArmed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -43,7 +45,7 @@ export function StopButton({ stopped, onStop, onResume, disabled }: {
   if (stopped) {
     return (
       <button type="button" className="btn" onClick={onResume} disabled={disabled}>
-        Resume auto
+        {t("Resume auto")}
       </button>
     );
   }
@@ -60,7 +62,7 @@ export function StopButton({ stopped, onStop, onResume, disabled }: {
           timer.current = setTimeout(() => setArmed(false), 4000);
         }
       }}>
-      {armed ? "Confirm stop" : "Stop"}
+      {t(armed ? "Confirm stop" : "Stop")}
     </button>
   );
 }
@@ -69,19 +71,20 @@ export function StopButton({ stopped, onStop, onResume, disabled }: {
 export function PowerSlider({ max, min, value, disabled, onCommit }: {
   max: number; min: number; value: number; disabled?: boolean; onCommit: (kw: number) => void;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   return (
     <div className="slider">
       <label className="label" htmlFor="manual-power">
-        Manual power <b style={{ color: "var(--text)" }}>{signed(draft)} kW</b>
+        {t("Manual power")} <b style={{ color: "var(--text)" }}>{signed(draft)} kW</b>
       </label>
       <input id="manual-power" type="range" min={min} max={max} step={10} value={draft}
-        disabled={disabled} aria-valuetext={`${signed(draft)} kilowatts`}
+        disabled={disabled} aria-valuetext={`${signed(draft)} ${t("kilowatts")}`}
         onChange={(e) => setDraft(Number(e.target.value))}
         onPointerUp={() => onCommit(draft)} onKeyUp={() => onCommit(draft)} />
-      <div className="ends"><span>−{num(-min)} DISCHARGE</span><span>0</span>
-        <span>CHARGE +{num(max)}</span></div>
+      <div className="ends"><span>−{num(-min)} {t("DISCHARGE")}</span><span>0</span>
+        <span>{t("CHARGE")} +{num(max)}</span></div>
     </div>
   );
 }

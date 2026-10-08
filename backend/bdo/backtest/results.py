@@ -13,6 +13,7 @@ from bdo.backtest.runner import BacktestResult, run_backtest
 from bdo.config import Config, data_dir
 from bdo.data import weather
 from bdo.data.prices import ensure_prices, resolve_source
+from bdo.data.reserves import ensure_imbalance_prices, ensure_reserve_prices
 from bdo.timeutil import day_bounds_utc
 
 FLOAT_FORMAT = "%.6f"
@@ -28,6 +29,38 @@ def year_irradiance(cfg: Config, year: int) -> pd.Series | None:
     if not cfg.site.has_solar:
         return None
     return weather.irradiance_cached(cfg.site, date(year - 1, 12, 30), date(year, 12, 31))
+
+
+def year_reserves(cfg: Config, year: int) -> pd.DataFrame | None:
+    """Reserve capacity prices for the year, or None when reserves are switched off."""
+    if not cfg.reserves.enabled:
+        return None
+    start, _ = day_bounds_utc(date(year, 1, 1))
+    _, end = day_bounds_utc(date(year, 12, 31))
+    return ensure_reserve_prices(start, end)
+
+
+def imbalance_stats(year: int, prices: pd.DataFrame) -> dict[str, float] | None:
+    """How far the imbalance price sits from the day-ahead price: the cost of missing a
+    schedule by 1 MWh. None when imbalance prices cannot be fetched."""
+    start, _ = day_bounds_utc(date(year, 1, 1))
+    _, end = day_bounds_utc(date(year, 12, 31))
+    try:
+        imbalance = ensure_imbalance_prices(start, end)
+    except RuntimeError:
+        return None
+    if imbalance.empty:
+        return None
+    day_ahead = prices.drop_duplicates("ts_utc").set_index("ts_utc")["price_eur_mwh"]
+    # Hourly day-ahead prices hold for the four settlement periods of their hour.
+    aligned = day_ahead.reindex(imbalance.index.union(day_ahead.index)).ffill(limit=3)
+    gap = (imbalance - aligned.reindex(imbalance.index)).dropna()
+    return {
+        "periods": float(len(gap)),
+        "mean_abs_gap_eur_mwh": float(gap.abs().mean()),
+        "p95_abs_gap_eur_mwh": float(gap.abs().quantile(0.95)),
+        "mean_gap_eur_mwh": float(gap.mean()),
+    }
 
 
 def run_dir(cfg: Config, year: int, root: Path | None = None) -> Path:
@@ -48,17 +81,25 @@ def summarise(
         "days": int(result.daily["date"].nunique()),
         "headline": metrics.headline(yearly),
         "special_days": metrics.special_days(result.daily),
+        "markets": metrics.markets(yearly),
         "skipped_days": [d.isoformat() for d in result.skipped_days],
         "violations": result.violations,
-        "config": cfg.model_dump(include={"battery", "site", "market"}),
+        "config": cfg.model_dump(include={"battery", "site", "market", "reserves"}),
     }
     return summary, monthly, yearly
 
 
 def run_and_save(cfg: Config, year: int, root: Path | None = None) -> tuple[dict, Path]:
     source = resolve_source(cfg)
-    result = run_backtest(cfg, year, year_prices(cfg, year), year_irradiance(cfg, year))
+    prices = year_prices(cfg, year)
+    result = run_backtest(cfg, year, prices, year_irradiance(cfg, year),
+                          reserve_prices=year_reserves(cfg, year))
     summary, monthly, yearly = summarise(cfg, result, source)
+    if summary["markets"] is not None:
+        mw = cfg.battery.max_discharge_kw / 1000.0
+        summary["markets"]["eur_per_mw_year"] = summary["markets"]["total_eur"] / mw
+        summary["markets"]["imbalance"] = imbalance_stats(year, prices)
+        summary["markets"]["assumptions"] = cfg.reserves.model_dump()
     out = run_dir(cfg, year, root)
     result.daily.to_csv(out / "daily.csv", index=False, float_format=FLOAT_FORMAT)
     monthly.to_csv(out / "monthly.csv", index=False, float_format=FLOAT_FORMAT)

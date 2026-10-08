@@ -16,6 +16,16 @@ _RES = {"PT15M": 15, "PT30M": 30, "PT60M": 60}
 SDAC_SEQUENCE = "1"
 
 
+def raise_without_token(resp: httpx.Response, token: str) -> None:
+    """Raise for an error status without the token: httpx puts the full URL, and with it
+    the security token, into its own error message, which would end up in logs."""
+    if resp.is_success:
+        return
+    reason = re.search(r"<text>(.*?)</text>", resp.text, re.S)
+    detail = (reason.group(1) if reason else resp.text[:200]).replace(token, "***")
+    raise RuntimeError(f"ENTSO-E request failed with HTTP {resp.status_code}: {detail.strip()}")
+
+
 def _strip_ns(tag: str) -> str:
     return re.sub(r"^\{.*\}", "", tag)
 
@@ -90,7 +100,7 @@ def fetch_prices(
                 "periodEnd": f"{end:%Y%m%d%H%M}",
             },
         )
-        resp.raise_for_status()
+        raise_without_token(resp, token)
     finally:
         if own:
             client.close()

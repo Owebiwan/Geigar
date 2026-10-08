@@ -232,6 +232,49 @@ def test_quarter_hour_forecast_replaces_hours_of_the_15_minute_era():
     np.testing.assert_allclose(day_guess(today, out, None), out.iloc[2:].to_numpy())
 
 
+def test_live_forecast_for_an_uncleared_day(cfg, tmp_path, monkeypatch):
+    from bdo.forecast import live
+
+    prices, fund = _world(start="2022-12-01T00:00Z", days=63)
+    day = date(2023, 1, 30)  # prices are only "published" up to the day before
+    start, end = day_bounds_utc(day)
+    known = prices[prices["ts_utc"] < start]
+    monkeypatch.setattr(live, "ensure_prices", lambda c, a, b, source=None, now=None: known)
+    calls = []
+
+    def fundamentals(a, b, now=None, res="hour"):
+        calls.append(res)
+        return fund
+
+    monkeypatch.setattr(live, "ensure_fundamentals", fundamentals)
+    fast = ModelParams(max_iter=20, train_years=1.0)
+    now = pd.Timestamp("2023-01-29T08:00Z")
+    out = live.forecast_day(cfg, day, now=now, root=tmp_path, params=fast)
+    assert out is not None and out.variant == "forecast_fundamentals"
+    assert len(out.prices) == 24 and out.prices["ts_utc"].iloc[0] == start
+    actual = prices[(prices["ts_utc"] >= start) & (prices["ts_utc"] < end)]["price_eur_mwh"]
+    assert (out.prices["price_eur_mwh"].to_numpy() - actual.to_numpy()).__abs__().mean() < 15
+    # A second request is served from the cache without touching the fundamentals again.
+    n = len(calls)
+    again = live.forecast_day(cfg, day, now=now, root=tmp_path, params=fast)
+    assert len(calls) == n and again.prices.equals(out.prices)
+    # Without TSO forecasts for the day the prices-only model answers.
+    monkeypatch.setattr(live, "ensure_fundamentals",
+                        lambda a, b, now=None, res="hour": fund[fund.index < start])
+    blind = live.forecast_day(cfg, day, now=now, root=tmp_path / "c", params=fast)
+    assert blind is not None and blind.variant == "forecast_prices"
+    # While that prices-only forecast is fresh, the slow look for TSO forecasts is skipped.
+    monkeypatch.setattr(live, "ensure_fundamentals", lambda *a, **k: 1 / 0)
+    fresh = pd.Timestamp.now(tz="UTC")
+    quick = live.forecast_day(cfg, day, now=fresh, root=tmp_path / "c", params=fast)
+    assert quick is not None and quick.variant == "forecast_prices"
+    # Two days ahead cannot be forecast: its previous day has no prices yet.
+    assert live.forecast_day(cfg, date(2023, 1, 31), now=now, root=tmp_path, params=fast) is None
+    # A far-future day is refused before any data is requested.
+    monkeypatch.setattr(live, "ensure_prices", lambda *a, **k: 1 / 0)
+    assert live.forecast_day(cfg, date(2031, 1, 5), now=now, root=tmp_path) is None
+
+
 def test_fundamentals_are_cached_per_finished_year(tmp_path, monkeypatch):
     calls = []
 

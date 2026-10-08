@@ -21,6 +21,13 @@ def scenario(cfg: Config, duration_h: float, round_trip: float) -> Config:
     return out
 
 
+def with_markets(cfg: Config) -> Config:
+    """The same battery, also selling FCR and aFRR capacity (v2)."""
+    out = cfg.model_copy(deep=True)
+    out.reserves.enabled = True
+    return out
+
+
 def run_sweep(
     cfg: Config, year: int, durations: list[float], efficiencies: list[float],
     root: Path | None = None,

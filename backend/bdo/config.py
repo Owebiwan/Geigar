@@ -69,6 +69,21 @@ class MarketConfig(BaseModel):
     timezone: str = "Europe/Berlin"
 
 
+class ReservesConfig(BaseModel):
+    """Balancing capacity markets (v2). Off by default: v1 is day-ahead only."""
+
+    enabled: bool = False
+    fcr: bool = True
+    afrr: bool = True
+    # Energy the battery must be able to deliver or absorb per kW of reserve sold.
+    # FCR: the 15-minute criterion for storage. aFRR: the whole 4-hour product, the most
+    # cautious reading; shorter values raise revenue sharply (see the README table).
+    fcr_energy_hours: float = Field(default=0.25, ge=0)
+    afrr_energy_hours: float = Field(default=4.0, ge=0)
+    # Wear from FCR activation: kWh of throughput per kW reserved per hour.
+    fcr_throughput_kwh_per_kw_h: float = Field(default=0.05, ge=0)
+
+
 class ControllerConfig(BaseModel):
     modbus_host: str = "127.0.0.1"
     modbus_port: int = 5020
@@ -89,12 +104,16 @@ class Config(BaseModel):
     battery: BatteryConfig
     site: SiteConfig = SiteConfig()
     market: MarketConfig = MarketConfig()
+    reserves: ReservesConfig = ReservesConfig()
     controller: ControllerConfig = ControllerConfig()
     simulator: SimulatorConfig = SimulatorConfig()
 
     def hash(self) -> str:
         """Hash of everything that affects optimizer and backtest results (BT-6)."""
         payload = self.model_dump(include={"battery", "site", "market"})
+        if self.reserves.enabled:
+            # Only part of the hash when used, so day-ahead-only runs keep their hash.
+            payload["reserves"] = self.reserves.model_dump()
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode()).hexdigest()[:12]
 

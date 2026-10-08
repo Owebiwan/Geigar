@@ -8,6 +8,7 @@ import { PowerDial } from "../components/PowerDial";
 import { RingGauge } from "../components/RingGauge";
 import { TimeSeriesChart } from "../components/TimeSeriesChart";
 import { berlinTime, num, signed } from "../format";
+import { useT } from "../i18n";
 
 const REASONS: Record<string, string> = {
   schedule: "Following schedule", manual: "Manual setpoint", clamped: "Clamped to power limit",
@@ -18,6 +19,10 @@ const REASONS: Record<string, string> = {
   soc_min: "SoC at lower limit", startup: "Starting",
 };
 
+/** One decimal for small values, none once the number needs three digits, so the big
+ *  numerals always fit their tile. */
+const tight = (v: number | null | undefined) => (v != null && Math.abs(v) >= 100 ? 0 : 1);
+
 interface Props {
   live: Telemetry | null;
   history: Sample[];
@@ -25,7 +30,9 @@ interface Props {
 }
 
 export function Command({ live, history, config }: Props) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
+  const reason = t(REASONS[live?.reason ?? ""] ?? live?.reason ?? "---");
   const b = config?.battery;
   const max = b?.max_charge_kw ?? 500;
   const maxDis = b?.max_discharge_kw ?? 500;
@@ -40,49 +47,55 @@ export function Command({ live, history, config }: Props) {
 
   return (
     <div className="grid command">
-      <Panel title="State of charge" code={code} area="soc" grid
+      <Panel title={t("State of charge")} code={code} area="soc" grid
         status={fault ? "fault" : online && live?.link_ok ? "on" : "off"}>
         <RingGauge label="SOC" unit="%" min={0} max={100} digits={1} fault={fault}
           value={live?.soc == null ? null : live.soc * 100}
           marks={b ? [b.soc_min * 100, b.soc_max * 100] : undefined} />
         <div className="gauge-row">
-          <span>Plan <b>{num(live?.planned_soc == null ? null : live.planned_soc * 100, 1)} %</b></span>
-          <span>Window <b>{b ? `${num(b.soc_min * 100)}–${num(b.soc_max * 100)} %` : "---"}</b></span>
-          <span>Temp <b>{num(live?.temperature_c, 1)} °C</b></span>
+          <span>{t("Plan")} <b>{num(live?.planned_soc == null ? null : live.planned_soc * 100, 1)} %</b></span>
+          <span>{t("Window")} <b>{b ? `${num(b.soc_min * 100)}–${num(b.soc_max * 100)} %` : "---"}</b></span>
+          <span>{t("Temp")} <b>{num(live?.temperature_c, 1)} °C</b></span>
         </div>
       </Panel>
 
-      <Panel title="Power" code={`±${num(max)} KW`} area="power" grid
+      <Panel title={t("Power")} code={`±${num(max)} KW`} area="power" grid
         status={fault ? "fault" : online && live?.link_ok ? "on" : "off"}>
         <PowerDial value={live?.power_kw} setpoint={live?.setpoint_kw} max={Math.max(max, maxDis)}
           fault={fault} />
         <div className="gauge-row">
-          <span>Setpoint <b>{signed(live?.setpoint_kw, 0)} kW</b></span>
-          <span>Bus <b>{num(live?.voltage_v, 1)} V</b></span>
-          <span>Interval <b>{live?.interval == null ? "---" : String(live.interval).padStart(3, "0")}</b></span>
+          <span>{t("Setpoint")} <b>{signed(live?.setpoint_kw, 0)} kW</b></span>
+          <span>{t("Bus")} <b>{num(live?.voltage_v, 1)} V</b></span>
+          <span>{t("Interval")} <b>{live?.interval == null ? "---" : String(live.interval).padStart(3, "0")}</b></span>
         </div>
       </Panel>
 
-      <Panel title="Readouts" code={live?.day ?? "NO DAY"} area="tiles"
+      <Panel title={t("Readouts")} code={live?.day ?? t("NO DAY")} area="tiles"
         right={live?.ts ? berlinTime(live.ts) : "--:--:--"}>
         <div className="tiles">
-          <NumericTile label="Price" unit="€/MWh" value={live?.price_eur_mwh} digits={1} live />
-          <NumericTile label="Power" unit="kW" value={live?.power_kw} showSign live />
-          <NumericTile label="Revenue today" unit="€" value={live?.revenue_eur} digits={1} showSign
-            live solid />
+          <NumericTile label={t("Price")} unit="€/MWh" value={live?.price_eur_mwh} live
+            digits={tight(live?.price_eur_mwh)} />
+          <NumericTile label={t("Power")} unit="kW" value={live?.power_kw} showSign live />
+          <NumericTile label={t("Revenue today")} unit="€" value={live?.revenue_eur} showSign live solid
+            digits={tight(live?.revenue_eur)} />
         </div>
         <div className="gauge-row">
-          <span>Charged <b>{num(live?.charged_kwh, 0)} kWh</b></span>
-          <span>Discharged <b>{num(live?.discharged_kwh, 0)} kWh</b></span>
-          <span>Re-plans <b>{live?.reoptimisations ?? 0}</b></span>
+          <span>{t("Charged")} <b>{num(live?.charged_kwh, 0)} kWh</b></span>
+          <span>{t("Discharged")} <b>{num(live?.discharged_kwh, 0)} kWh</b></span>
+          <span>{t("Re-plans")} <b>{live?.reoptimisations ?? 0}</b></span>
+        </div>
+        <div className="gauge-row">
+          <span>{t("Off schedule")} <b>{num(live?.imbalance_kwh, 1)} kWh</b></span>
+          <span>{t("Imbalance settlement")} <b>{live?.imbalance_eur == null ? t("price not published")
+            : `${signed(live.imbalance_eur, 2)} €`}</b></span>
         </div>
       </Panel>
 
-      <Panel title="Control" code="SAFETY LAYER ACTIVE" area="control" status={tripped ? "fault" : undefined}>
+      <Panel title={t("Control")} code={t("SAFETY LAYER ACTIVE")} area="control" status={tripped ? "fault" : undefined}>
         <div className="controls">
-          <Segmented label="Mode" disabled={!online || live?.mode === "STOP"}
+          <Segmented label={t("Mode")} disabled={!online || live?.mode === "STOP"}
             value={live?.mode === "MANUAL" ? "MANUAL" : "AUTO"}
-            options={[{ value: "AUTO", label: "AUTO" }, { value: "MANUAL", label: "MANUAL" }]}
+            options={[{ value: "AUTO", label: t("AUTO") }, { value: "MANUAL", label: t("MANUAL") }]}
             onChange={(mode) => act(() => api.setMode(mode))} />
           <StopButton disabled={!online} stopped={live?.mode === "STOP"}
             onStop={() => act(() => api.setMode("STOP"))}
@@ -91,38 +104,39 @@ export function Command({ live, history, config }: Props) {
             disabled={!online || live?.mode !== "MANUAL"}
             onCommit={(kw) => act(() => api.setManual(kw))} />
         </div>
-        {!online && <p className="banner" role="alert">Controller offline</p>}
+        {!online && <p className="banner" role="alert">{t("Controller offline")}</p>}
         {online && (tripped || fault) && (
           <p className="banner" role="alert">
-            {REASONS[live?.reason ?? ""] ?? live?.reason}
-            {live?.faults?.length ? ` · ${live.faults.join(" · ")}` : ""}
+            {reason}
+            {live?.faults?.length ? ` · ${live.faults.map((f) => t(f)).join(" · ")}` : ""}
           </p>
         )}
         {online && !tripped && !fault && (
-          <p className="note">STATUS · {(REASONS[live?.reason ?? ""] ?? "---").toUpperCase()}
-            {live?.speed && live.speed > 1 ? ` · REPLAY ×${num(live.speed)}` : " · LIVE"}</p>
+          <p className="note">{t("STATUS")} · {reason.toUpperCase()}
+            {live?.speed && live.speed > 1 ? ` · ${t("REPLAY")} ×${num(live.speed)}`
+              : ` · ${t("LIVE")}`}</p>
         )}
         {error && <p className="banner" role="alert">{error}</p>}
       </Panel>
 
-      <Panel title="Live telemetry" code={`${history.length} SAMPLES`} area="wave" grid>
+      <Panel title={t("Live telemetry")} code={`${history.length} ${t("SAMPLES")}`} area="wave" grid>
         {history.length > 1 ? (
           <>
-            <TimeSeriesChart label="Live power and state of charge" step={0} scan
+            <TimeSeriesChart label={t("Live power and state of charge")} step={0} scan
               x={history.map((s) => s.t)} formatX={berlinTime}
               panes={[
-                { id: "p", label: "Power", unit: "kW", height: 120, kind: "line", digits: 0,
+                { id: "p", label: t("Power"), unit: "kW", height: 120, kind: "line", digits: 0,
                   domain: [-maxDis, max], values: history.map((s) => s.power_kw),
-                  compare: { label: "Setpoint", values: history.map((s) => s.setpoint_kw) } },
-                { id: "s", label: "SoC", unit: "%", height: 70, kind: "line", digits: 1, scale: 100,
+                  compare: { label: t("Setpoint"), values: history.map((s) => s.setpoint_kw) } },
+                { id: "s", label: t("SoC"), unit: "%", height: 70, kind: "line", digits: 1, scale: 100,
                   domain: [0, 100], values: history.map((s) => s.soc) },
               ]} />
             <div className="legend">
-              <span><i className="k-line" />Measured</span>
-              <span><i className="k-dash" />Setpoint</span>
+              <span><i className="k-line" />{t("Measured")}</span>
+              <span><i className="k-dash" />{t("Setpoint")}</span>
             </div>
           </>
-        ) : <p className="note">WAITING FOR TELEMETRY…</p>}
+        ) : <p className="note">{t("WAITING FOR TELEMETRY…")}</p>}
       </Panel>
     </div>
   );

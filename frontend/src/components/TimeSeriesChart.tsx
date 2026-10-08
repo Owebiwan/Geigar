@@ -1,6 +1,7 @@
 import { scaleLinear } from "d3";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { num } from "../format";
+import { useT } from "../i18n";
 
 export interface Pane {
   id: string;
@@ -50,6 +51,7 @@ function useWidth(): [React.RefObject<HTMLDivElement>, number] {
  *  Each pane has its own y axis; panes share the time axis. */
 export function TimeSeriesChart(p: ChartProps) {
   const { x, step, panes } = p;
+  const t = useT();
   const [ref, width] = useWidth();
   const clip = useId();
   const full: [number, number] = useMemo(
@@ -127,8 +129,8 @@ export function TimeSeriesChart(p: ChartProps) {
             ))}
           </>
         ) : (
-          <span>{p.zoomable ? "Hover for values · scroll or +/− to zoom · drag to pan"
-            : "Hover for values"}</span>
+          <span>{t(p.zoomable ? "Hover for values · scroll or +/− to zoom · drag to pan"
+            : "Hover for values")}</span>
         )}
       </div>
       <svg height={height} role="img" aria-label={p.label} tabIndex={0}
@@ -251,16 +253,16 @@ export function TimeSeriesChart(p: ChartProps) {
         )}
       </svg>
       {p.zoomable && (
-        <div className="zoom" role="group" aria-label="Zoom">
-          <span className="label">Zoom</span>
+        <div className="zoom" role="group" aria-label={t("Zoom")}>
+          <span className="label">{t("Zoom")}</span>
           {([["Day", null], ["6 h", 6], ["2 h", 2], ["1 h", 1]] as const).map(([name, hours]) => (
             <button key={name} type="button" className="btn" onClick={() => zoomTo(hours)}
               aria-pressed={hours == null ? view == null : view != null
                 && Math.abs(span - hours * HOUR) < 1000}>
-              {name}
+              {name === "Day" ? t("Day") : name}
             </button>
           ))}
-          <span className="label">window {num(span / HOUR, 2)} h</span>
+          <span className="label">{t("window")} {num(span / HOUR, 2)} h</span>
         </div>
       )}
     </div>

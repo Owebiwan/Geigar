@@ -15,6 +15,7 @@ from bdo.optimizer.schedule import DayInputs, Schedule, check_constraints
 from bdo.timeutil import local_days
 
 STRATEGIES = ("optimizer", "naive", "persistence", "idle")
+MULTI = "multi_market"
 
 
 @dataclass
@@ -46,6 +47,15 @@ def _day_row(day: date, sched: Schedule, idle: Schedule, cfg: Config) -> dict[st
         "revenue_eur": sched.cash_flow_eur - idle.cash_flow_eur,
         "cash_flow_eur": sched.cash_flow_eur,
         "degradation_eur": float(f["degradation_eur"].sum()),
+        "energy_eur": float((f["energy_eur"] - f["grid_fee_eur"]).sum() - idle.frame[
+            "energy_eur"].sum() + idle.frame["grid_fee_eur"].sum()),
+        "fcr_eur": float(f["fcr_eur"].sum()),
+        "afrr_up_eur": float(f["afrr_up_eur"].sum()),
+        "afrr_dn_eur": float(f["afrr_dn_eur"].sum()),
+        "reserve_wear_eur": float(f["reserve_wear_eur"].sum()),
+        "fcr_kw": float(f["fcr_kw"].mean()),
+        "afrr_up_kw": float(f["afrr_up_kw"].mean()),
+        "afrr_dn_kw": float(f["afrr_dn_kw"].mean()),
         "charge_kwh": charge_kwh,
         "discharge_kwh": discharge_kwh,
         "cycles": discharge_kwh / cfg.battery.capacity_kwh,
@@ -61,14 +71,17 @@ def _day_row(day: date, sched: Schedule, idle: Schedule, cfg: Config) -> dict[st
 def run_backtest(
     cfg: Config, year: int, prices: pd.DataFrame, ghi: pd.Series | None = None,
     forecasts: dict[str, pd.Series] | None = None, last_day: date | None = None,
+    reserve_prices: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Replay a year. `forecasts` maps a strategy name to hourly price forecasts (UTC);
-    each one is planned on its forecast and settled at the real prices."""
+    each one is planned on its forecast and settled at the real prices. With reserves
+    enabled and `reserve_prices` given, a multi-market strategy also sells FCR and aFRR."""
     from bdo.forecast.apply import day_guess
 
     b, s = cfg.battery, cfg.site
     forecasts = forecasts or {}
-    names = (*STRATEGIES, *forecasts)
+    multi = cfg.reserves.enabled and reserve_prices is not None
+    names = (*STRATEGIES, *forecasts, *((MULTI,) if multi else ()))
     soc = {name: b.soc_start for name in names}
     mtd_peak = {name: 0.0 for name in names}
     rows: list[dict[str, object]] = []
@@ -88,6 +101,8 @@ def run_backtest(
             previous = None
             continue
 
+        if multi:
+            inputs = inputs.with_reserves(reserve_prices)
         idle = baselines.idle(inputs, b, s, soc["idle"])
         opt = solve_day(inputs, b, s, soc["optimizer"], mtd_peak["optimizer"])
         day_runs = {
@@ -102,9 +117,13 @@ def run_backtest(
             guess = day_guess(inputs, hourly, previous)
             day_runs[name] = baselines.plan_on_guess(
                 inputs, guess, b, s, soc[name], mtd_peak[name], name)
+        if multi:
+            day_runs[MULTI] = solve_day(inputs, b, s, soc[MULTI], mtd_peak[MULTI],
+                                        strategy=MULTI, reserves=cfg.reserves)
         result.solve_seconds.append(opt.solve_seconds)
         for name, sched in day_runs.items():
-            for problem in check_constraints(sched.frame, b):
+            limits = cfg.reserves if name == MULTI else None
+            for problem in check_constraints(sched.frame, b, reserves=limits):
                 result.violations.append(f"{day} {name}: {problem}")
             rows.append(_day_row(day, sched, idle, cfg))
             soc[name] = sched.soc_end

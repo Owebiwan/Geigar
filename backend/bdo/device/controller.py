@@ -111,6 +111,11 @@ class Controller:
         self.revenue_eur = 0.0
         self.energy_charged_kwh = 0.0
         self.energy_discharged_kwh = 0.0
+        # Imbalance: energy that differs from the schedule is settled at the imbalance
+        # price instead of the day-ahead price (v2).
+        self.imbalance_prices: pd.Series | None = None
+        self.imbalance_kwh = 0.0
+        self.imbalance_eur: float | None = None
         self.events: list[Event] = []
         self._last_written: tuple[float, int | None] | None = None
         self._last_sim: pd.Timestamp | None = None
@@ -127,6 +132,8 @@ class Controller:
 
     def reset_day(self) -> None:
         self.revenue_eur = self.energy_charged_kwh = self.energy_discharged_kwh = 0.0
+        self.imbalance_kwh = 0.0
+        self.imbalance_eur = None
         self._last_sim = None
 
     def _current(self, now: pd.Timestamp) -> tuple[int | None, pd.Series | None]:
@@ -205,7 +212,22 @@ class Controller:
             if row is not None:
                 self.revenue_eur += -p * dt_h * float(row["price_eur_mwh"]) / 1000.0
                 self.revenue_eur -= self.cfg.battery.degradation_eur_per_kwh * abs(p) * dt_h
+                self._account_imbalance(now, row, p, dt_h)
         self._last_sim = now
+
+    def _account_imbalance(self, now: pd.Timestamp, row: pd.Series, p: float,
+                           dt_h: float) -> None:
+        """Extra consumption against the schedule is bought at the imbalance price,
+        a shortfall is sold at it. The result is the change against day-ahead settlement."""
+        extra_kwh = (p - float(row["power_kw"])) * dt_h
+        self.imbalance_kwh += abs(extra_kwh)
+        if self.imbalance_prices is None:
+            return
+        price = self.imbalance_prices.get(now.floor("15min"))
+        if price is None or pd.isna(price):
+            return
+        gap = float(price) - float(row["price_eur_mwh"])
+        self.imbalance_eur = (self.imbalance_eur or 0.0) - extra_kwh / 1000.0 * gap
 
     def state(self, now: pd.Timestamp) -> dict[str, object]:
         pos, row = self._current(now)
@@ -225,6 +247,8 @@ class Controller:
             "revenue_eur": round(self.revenue_eur, 3),
             "charged_kwh": round(self.energy_charged_kwh, 2),
             "discharged_kwh": round(self.energy_discharged_kwh, 2),
+            "imbalance_kwh": round(self.imbalance_kwh, 2),
+            "imbalance_eur": None if self.imbalance_eur is None else round(self.imbalance_eur, 3),
             "soc": None if t is None else t.soc,
             "power_kw": None if t is None else t.power_kw,
             "voltage_v": None if t is None else t.voltage_v,

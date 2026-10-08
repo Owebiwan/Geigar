@@ -20,7 +20,8 @@ flowchart LR
 
 | Component | Code | Runs as |
 | --- | --- | --- |
-| Ingestion and cache | `backend/bdo/data/` | library, `data` init container |
+| Ingestion and cache | `backend/bdo/data/` (prices, fundamentals, reserves, imbalance) | library, `data` init container |
+| Price forecaster | `backend/bdo/forecast/` | CLI, `data` init container, API |
 | Optimizer | `backend/bdo/optimizer/` | library |
 | Backtest and report | `backend/bdo/backtest/` | CLI, `data` init container |
 | Simulated inverter | `backend/bdo/device/simulator.py` | `simulator` service, Modbus TCP :5020 |
@@ -38,6 +39,9 @@ flowchart LR
   cannot earn money from an infeasible plan.
 - **UTC inside, Berlin at the edges.** Timestamps are stored and computed in UTC. Delivery days
   are cut at Berlin midnight, so they have 23, 24 or 25 hours.
+- **Sold reserve is deliverable.** In the multi-market mode the day-ahead position plus every
+  band sold must fit the inverter and the grid connection, with energy behind it, in every
+  interval. `check_constraints` verifies it independently of the solver.
 - **No invented prices.** Gaps and duplicates are reported and the affected day is skipped.
 
 ## Data flow for one day

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
 from bdo.config import Config
 from bdo.data import load_profile, weather
 from bdo.data.quality import day_prices
 from bdo.optimizer.model import solve_day
-from bdo.optimizer.schedule import DayInputs, Schedule
+from bdo.optimizer.schedule import DayInputs, Schedule, settle
 
 
 def build_inputs(
@@ -30,6 +31,28 @@ def build_inputs(
 
 def plan_day(cfg: Config, inputs: DayInputs, soc0: float, mtd_peak_kw: float = 0.0) -> Schedule:
     return solve_day(inputs, cfg.battery, cfg.site, soc0, mtd_peak_kw)
+
+
+def plan_rest_of_day(
+    cfg: Config, inputs: DayInputs, now: pd.Timestamp, soc: float, mtd_peak_kw: float = 0.0
+) -> Schedule:
+    """Plan for a controller that starts part-way through the day.
+
+    The hours already gone cannot be traded and the running interval is left idle, so
+    those rows hold the current SoC at 0 kW. The plan proper starts at the next
+    interval boundary.
+    """
+    start = int((inputs.index <= now).sum())
+    if start == 0:
+        return plan_day(cfg, inputs, soc, mtd_peak_kw)
+    head_inputs = DayInputs(inputs.index[:start], inputs.dt_h, inputs.price[:start],
+                            inputs.load_kw[:start], inputs.solar_kw[:start])
+    head = settle(np.zeros(start), head_inputs, cfg.battery, cfg.site, soc, "optimizer")
+    if start >= len(inputs.index):
+        return head
+    tail = solve_day(inputs.tail(start), cfg.battery, cfg.site, head.soc_end, mtd_peak_kw)
+    frame = pd.concat([head.frame, tail.frame], ignore_index=True)
+    return Schedule(frame, "optimizer", tail.solve_seconds, tail.status, dict(tail.meta))
 
 
 def interval_at(schedule: pd.DataFrame, now: pd.Timestamp) -> int | None:

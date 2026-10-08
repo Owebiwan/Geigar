@@ -31,7 +31,7 @@ class ModelParams:
     train_years: float = 4.0
 
 
-def _fit(train: pd.DataFrame, features: list[str], p: ModelParams) -> HistGradientBoostingRegressor:
+def fit(train: pd.DataFrame, features: list[str], p: ModelParams) -> HistGradientBoostingRegressor:
     target = train["price"] - train["lag24"] if p.difference_target else train["price"]
     model = HistGradientBoostingRegressor(
         loss="absolute_error", max_iter=p.max_iter, learning_rate=p.learning_rate,
@@ -61,7 +61,7 @@ def walk_forward(
         test = test.dropna(subset=["lag24"])
         if train.empty or test.empty:
             continue
-        pred = _fit(train, features, p).predict(test[features])
+        pred = fit(train, features, p).predict(test[features])
         if p.difference_target:
             pred = pred + test["lag24"].to_numpy()
         out.append(pd.Series(pred, index=test.index))

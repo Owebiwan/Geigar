@@ -54,6 +54,26 @@ def test_schedule_for_a_day(client):
 def test_schedule_reports_missing_prices_instead_of_guessing(client):
     body = client.get("/api/schedule", params={"day": "2030-01-05"}).json()
     assert body["available"] is False and body["quality"]["gaps"]
+    assert client.get("/api/schedule", params={"day": "2025-10-26"}).json()["provisional"] is False
+
+
+def test_schedule_offers_a_provisional_plan_on_forecast_prices(client, monkeypatch):
+    from bdo.forecast.live import LiveForecast
+
+    start, _ = day_bounds_utc(date(2030, 1, 5))
+    guess = make_prices(start.isoformat(), 96, res=15, seed=8)
+    monkeypatch.setattr(main.forecast_live, "forecast_day",
+                        lambda cfg, day: LiveForecast(day, guess, "forecast_prices", start))
+    body = client.get("/api/schedule", params={"day": "2030-01-05"}).json()
+    assert body["available"] and body["provisional"] is True
+    assert body["forecast_model"] == "forecast_prices" and body["intervals"] == 96
+    assert body["rows"][0]["price_eur_mwh"] == pytest.approx(guess["price_eur_mwh"].iloc[0])
+
+    def broken(cfg, day):
+        raise RuntimeError("no history")
+
+    monkeypatch.setattr(main.forecast_live, "forecast_day", broken)
+    assert client.get("/api/schedule", params={"day": "2030-01-05"}).json()["available"] is False
     assert client.get("/api/schedule").status_code == 200  # default day: tomorrow
 
 
@@ -81,6 +101,17 @@ def test_backtest_endpoint(client, monkeypatch):
     monkeypatch.setattr(main.forecast_eval, "run_and_save", fake_forecast)
     done = client.post("/api/forecast/run", params={"year": 2023, "duration": 1}).json()
     assert done["forecast"]["days"] == 20 and len(done["forecast"]["monthly"]) == 1
+
+    assert done["markets"] is None and done["markets_possible"] is False
+    grid = pd.date_range(start, end, freq="15min", inclusive="left")
+    reserve = pd.DataFrame({"fcr": 4.0, "afrr_up": 3.0, "afrr_dn": 2.0}, index=grid)
+    monkeypatch.setattr(results, "ensure_reserve_prices", lambda a, b: reserve)
+    monkeypatch.setattr(results, "ensure_imbalance_prices",
+                        lambda a, b: pd.Series(60.0, index=grid, name="imbalance_eur_mwh"))
+    multi = client.post("/api/markets/run", params={"year": 2023, "duration": 1}).json()
+    assert multi["markets"]["total_eur"] > multi["markets"]["day_ahead_only_eur"]
+    assert multi["markets"]["violations"] == 0 and multi["markets"]["monthly"]
+    assert multi["headline"]["optimizer_eur"] == body["headline"]["optimizer_eur"]
     assert client.get("/api/backtest", params={"year": 2023}).json()["available"] is False
 
 
@@ -136,6 +167,22 @@ async def test_runner_plans_the_day_and_reoptimises_on_drift(cfg, monkeypatch):
     runner = Runner(cfg, speed=720.0, replay_day=date(2025, 10, 20))
     runner._plan(date(2025, 10, 20), start)
     assert runner.plan is not None and len(runner.schedule_rows()) == 96
+    assert "reoptimised_at" not in runner.plan.meta
+
+    # A controller started at 14:05 plans only the rest of the day, from the current SoC.
+    late = Runner(cfg, speed=1.0, replay_day=None)
+    late.controller.telemetry = Telemetry(0.8, 0.0, 750.0, 25.0, 0, 0, 1)
+    late._plan(date(2025, 10, 20), start + pd.Timedelta(hours=14, minutes=5))
+    frame = late.plan.frame
+    assert len(frame) == 96
+    assert frame["power_kw"].iloc[:57].abs().sum() == 0  # past and running intervals idle
+    assert frame["soc"].iloc[:57].eq(0.8).all()
+    assert frame["soc_start"].iloc[57] == pytest.approx(0.8)
+    assert frame["power_kw"].iloc[57:].abs().sum() > 0
+    assert late.plan.soc_end == pytest.approx(cfg.battery.soc_end, abs=1e-6)
+    after_close = Runner(cfg, speed=1.0, replay_day=None)
+    after_close._plan(date(2025, 10, 20), start + pd.Timedelta(hours=23, minutes=59))
+    assert after_close.plan.frame["power_kw"].abs().sum() == 0
     c = runner.controller
     c.link_ok, c.decision = True, service.Controller(cfg, runner.device).decision.__class__(
         0.0, "schedule", False)

@@ -1,5 +1,6 @@
 import { useTween } from "../hooks/useTween";
 import { num, signed } from "../format";
+import { useT } from "../i18n";
 import { arc, polar, TickRing } from "./RingGauge";
 
 interface PowerDialProps {
@@ -14,18 +15,19 @@ const SEGMENTS = 22;
 
 /** Bipolar dial: charge fills solid to the right, discharge is outlined to the left. */
 export function PowerDial({ value, setpoint, max, fault }: PowerDialProps) {
+  const t = useT();
   const shown = useTween(value, 400);
   const frac = shown == null ? 0 : Math.max(-1, Math.min(1, shown / max));
   const lit = Math.round(Math.abs(frac) * SEGMENTS);
   const seg = HALF / SEGMENTS;
-  const state = shown == null ? "NO DATA" : Math.abs(shown) < 0.5 ? "IDLE" : shown > 0 ? "CHARGING"
-    : "DISCHARGING";
+  const state = t(shown == null ? "NO DATA" : Math.abs(shown) < 0.5 ? "IDLE" : shown > 0
+    ? "CHARGING" : "DISCHARGING");
   const [nx, ny] = polar(78, frac * HALF);
   const [bx, by] = polar(58, frac * HALF);
   const sp = setpoint == null ? null : Math.max(-1, Math.min(1, setpoint / max)) * HALF;
   return (
     <svg className="gauge" viewBox="0 0 200 200" role="img"
-      aria-label={`Power: ${value == null ? "no data" : `${signed(value, 0)} kW, ${state}`}`}>
+      aria-label={`${t("Power")}: ${value == null ? t("no data") : `${signed(value, 0)} kW, ${state}`}`}>
       <circle className="spin rev" cx="100" cy="100" r="97" fill="none" stroke="var(--line-dim)"
         strokeDasharray="12 4 1 4" />
       <TickRing />

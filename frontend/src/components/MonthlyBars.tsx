@@ -1,7 +1,8 @@
 import { scaleBand, scaleLinear } from "d3";
 import { useState } from "react";
 import type { MonthRow } from "../api/client";
-import { num } from "../format";
+import { currentLocale, num } from "../format";
+import { useT } from "../i18n";
 
 const ALL_SERIES = [
   { key: "optimizer", label: "optimizer", cls: "solid", legend: "k-solid" },
@@ -12,10 +13,13 @@ const ALL_SERIES = [
 const W = 900;
 const H = 300;
 const M = { left: 56, right: 10, top: 14, bottom: 24 };
-const NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const monthName = (month: string) =>
+  new Date(`${month}-15T12:00:00Z`).toLocaleString(currentLocale(), { month: "short", timeZone: "UTC" })
+    .replace(".", "").toUpperCase();
 
 /** Monthly revenue per strategy. Series differ by texture and brightness, not hue. */
 export function MonthlyBars({ rows }: { rows: MonthRow[] }) {
+  const t = useT();
   const [hover, setHover] = useState<string | null>(null);
   // The forecast series only appears once the model has been run for this scenario.
   const SERIES = ALL_SERIES.filter((s) => rows.some((r) => r.strategy === s.key));
@@ -35,15 +39,15 @@ export function MonthlyBars({ rows }: { rows: MonthRow[] }) {
       <div className="readout">
         {hover ? (
           <>
-            <span>Month <b>{hover}</b></span>
+            <span>{t("Month")} <b>{hover}</b></span>
             {SERIES.map((s) => (
-              <span key={s.key}>{s.label} <b>€ {num(value(hover, s.key))}</b></span>
+              <span key={s.key}>{t(s.label)} <b>€ {num(value(hover, s.key))}</b></span>
             ))}
           </>
-        ) : <span>Hover a month for values</span>}
+        ) : <span>{t("Hover a month for values")}</span>}
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0}
-        aria-label={`Monthly revenue: ${SERIES.map((s) => s.label).join(", ")}`}
+        aria-label={`${t("Monthly revenue")}: ${SERIES.map((s) => t(s.label)).join(", ")}`}
         onPointerLeave={() => setHover(null)}
         onKeyDown={(e) => {
           const i = hover ? months.indexOf(hover) : -1;
@@ -56,7 +60,7 @@ export function MonthlyBars({ rows }: { rows: MonthRow[] }) {
             <text className="tick" x={M.left - 6} y={y(t) + 3} textAnchor="end">{num(t)}</text>
           </g>
         ))}
-        <text className="tick" x={M.left + 4} y={M.top + 2}>EUR / MONTH</text>
+        <text className="tick" x={M.left + 4} y={M.top + 2}>{t("EUR / MONTH")}</text>
         {months.map((m) => (
           <g key={m} onPointerEnter={() => setHover(m)}>
             <rect x={(band(m) ?? 0) - 6} y={M.top} width={band.bandwidth() + 12}
@@ -70,13 +74,13 @@ export function MonthlyBars({ rows }: { rows: MonthRow[] }) {
               );
             })}
             <text className="tick" x={(band(m) ?? 0) + band.bandwidth() / 2} y={H - 7}
-              textAnchor="middle">{NAMES[Number(m.slice(5, 7)) - 1]}</text>
+              textAnchor="middle">{monthName(m)}</text>
           </g>
         ))}
         <line className="axis" x1={M.left} x2={W - M.right} y1={y(0)} y2={y(0)} />
       </svg>
       <div className="legend">
-        {SERIES.map((s) => <span key={s.key}><i className={s.legend} />{s.label}</span>)}
+        {SERIES.map((s) => <span key={s.key}><i className={s.legend} />{t(s.label)}</span>)}
       </div>
     </div>
   );

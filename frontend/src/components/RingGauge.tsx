@@ -1,5 +1,6 @@
 import { useTween } from "../hooks/useTween";
 import { num } from "../format";
+import { useT } from "../i18n";
 
 export const polar = (r: number, deg: number, cx = 100, cy = 100): [number, number] => {
   const a = ((deg - 90) * Math.PI) / 180;
@@ -47,6 +48,7 @@ const SEGMENTS = 50;
 
 /** Ring gauge: tick ring, segmented arc, centre readout; eases between values (SC-2). */
 export function RingGauge({ label, value, min, max, unit, digits = 0, marks, fault }: RingGaugeProps) {
+  const t = useT();
   const shown = useTween(value, 500, min);
   const frac = shown == null ? 0 : Math.min(1, Math.max(0, (shown - min) / (max - min)));
   const lit = Math.round(frac * SEGMENTS);
@@ -54,7 +56,7 @@ export function RingGauge({ label, value, min, max, unit, digits = 0, marks, fau
   const text = num(shown, digits);
   return (
     <svg className="gauge" viewBox="0 0 200 200" role="img"
-      aria-label={`${label}: ${value == null ? "no data" : `${num(value, digits)} ${unit}`}`}>
+      aria-label={`${label}: ${value == null ? t("no data") : `${num(value, digits)} ${unit}`}`}>
       <circle className="spin" cx="100" cy="100" r="97" fill="none" stroke="var(--line-dim)"
         strokeDasharray="1 5" />
       <TickRing />

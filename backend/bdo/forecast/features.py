@@ -54,9 +54,14 @@ def hourly_prices(prices: pd.DataFrame) -> pd.Series:
     return grouped.mean().where(grouped.count() == expected).rename("price")
 
 
-def build_features(prices: pd.DataFrame, fundamentals: pd.DataFrame | None = None) -> pd.DataFrame:
+def build_features(
+    prices: pd.DataFrame, fundamentals: pd.DataFrame | None = None,
+    until: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Feature table. `until` extends it past the last known price, for days to forecast."""
     price = hourly_prices(prices)
-    index = pd.date_range(price.index.min(), price.index.max(), freq="h")
+    last = price.index.max() if until is None else max(price.index.max(), until)
+    index = pd.date_range(price.index.min(), last, freq="h")
     df = pd.DataFrame({"price": price.reindex(index)})
     local = index.tz_convert(BERLIN)
     day = pd.Series(local.date, index=df.index)

@@ -3,14 +3,28 @@ import { api, type SystemResponse, type Telemetry } from "../api/client";
 import { Panel } from "../components/Panel";
 import { TickRing } from "../components/RingGauge";
 import { berlinDate, berlinTime, num, signed } from "../format";
+import { useT, type Translate } from "../i18n";
 
-const stamp = (iso: string | null | undefined) =>
-  iso ? `${berlinDate(iso)} ${berlinTime(iso)}` : "NEVER";
+const stamp = (iso: string | null | undefined, t: Translate) =>
+  iso ? `${berlinDate(iso)} ${berlinTime(iso)}` : t("NEVER");
+
+/** Controller reason codes as short upper-case labels. */
+const REASON_LABELS: Record<string, string> = {
+  schedule: "SCHEDULE_REASON", manual: "MANUAL", stop: "STOP", fault: "FAULT",
+};
+const reasonText = (reason: string, t: Translate) => {
+  const key = REASON_LABELS[reason];
+  if (!key) return reason.toUpperCase();
+  const text = t(key);
+  return text === "SCHEDULE_REASON" ? "SCHEDULE" : text;
+};
 
 function HeartbeatRing({ beat, ok }: { beat: number | null | undefined; ok: boolean }) {
+  const t = useT();
   return (
     <svg className="gauge" viewBox="0 0 200 200" style={{ maxWidth: 200 }} role="img"
-      aria-label={`Modbus link ${ok ? "up" : "down"}, heartbeat ${beat ?? "none"}`}>
+      aria-label={t(ok ? "Modbus link up, heartbeat {beat}" : "Modbus link down, heartbeat {beat}",
+        { beat: beat ?? t("none") })}>
       <TickRing />
       <circle cx="100" cy="100" r="62" fill="none" stroke={ok ? "var(--line)" : "var(--alert)"}
         strokeWidth="1.5" />
@@ -18,13 +32,14 @@ function HeartbeatRing({ beat, ok }: { beat: number | null | undefined; ok: bool
       {ok && <circle key={beat ?? 0} className="beat" cx="100" cy="100" r="62" fill="none"
         stroke="var(--line)" strokeWidth="2" />}
       <text x="100" y="104" textAnchor="middle" fontSize="20" fontWeight="600"
-        fill={ok ? "var(--text)" : "var(--alert)"}>{ok ? "LINK UP" : "LINK DOWN"}</text>
+        fill={ok ? "var(--text)" : "var(--alert)"}>{t(ok ? "LINK UP" : "LINK DOWN")}</text>
       <text className="cap" x="100" y="122" textAnchor="middle">HB {beat ?? "-----"}</text>
     </svg>
   );
 }
 
 export function System({ live }: { live: Telemetry | null }) {
+  const t = useT();
   const [data, setData] = useState<SystemResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,29 +74,33 @@ export function System({ live }: { live: Telemetry | null }) {
 
   return (
     <div className="grid system">
-      <Panel title="Modbus link" code={c?.modbus ?? "TCP"} area="link"
+      <Panel title={t("Modbus link")} code={c?.modbus ?? "TCP"} area="link"
         status={!linkOk || faults.length ? "fault" : "on"}>
         <HeartbeatRing beat={c?.heartbeat} ok={linkOk} />
         <dl className="kv">
-          <dt>Controller</dt><dd className={online ? "" : "alert"}>{online ? "ONLINE" : "OFFLINE"}</dd>
-          <dt>Last reply</dt><dd>{num(c?.link_age_s, 1)} s ago</dd>
-          <dt>Mode</dt><dd>{c?.mode ?? "---"}</dd>
-          <dt>Decision</dt><dd>{c?.reason?.toUpperCase() ?? "---"}</dd>
-          <dt>Faults</dt>
-          <dd className={faults.length ? "alert" : ""}>{faults.length ? faults.join(" · ") : "NONE"}</dd>
+          <dt>{t("Controller")}</dt>
+          <dd className={online ? "" : "alert"}>{t(online ? "ONLINE" : "OFFLINE")}</dd>
+          <dt>{t("Last reply")}</dt><dd>{num(c?.link_age_s, 1)} {t("s ago")}</dd>
+          <dt>{t("Mode")}</dt><dd>{c?.mode ? t(c.mode) : "---"}</dd>
+          <dt>{t("Decision")}</dt><dd>{c?.reason ? reasonText(c.reason, t) : "---"}</dd>
+          <dt>{t("Faults")}</dt>
+          <dd className={faults.length ? "alert" : ""}>
+            {faults.length ? faults.map((f) => t(f)).join(" · ") : t("NONE")}</dd>
         </dl>
         <div className="controls" style={{ marginTop: 12 }}>
           <button type="button" className="btn" disabled={busy || !online}
             onClick={() => act(() => api.simFault(!faults.includes("DEVICE FAULT")))}>
-            {faults.includes("DEVICE FAULT") ? "Clear simulated fault" : "Inject simulated fault"}
+            {t(faults.includes("DEVICE FAULT") ? "Clear simulated fault" : "Inject simulated fault")}
           </button>
         </div>
       </Panel>
 
-      <Panel title="Register readout" code={`UNIT 1 · ${data?.registers.length ?? "--"} REG`} area="reg">
+      <Panel title={t("Register readout")}
+        code={`${t("UNIT")} 1 · ${data?.registers.length ?? "--"} REG`} area="reg">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Type</th><th>Addr</th><th>Raw</th><th>Value</th><th>Unit</th></tr></thead>
+            <thead><tr><th>{t("Name")}</th><th>{t("Type")}</th><th>{t("Addr")}</th><th>{t("Raw")}</th>
+              <th>{t("Value")}</th><th>{t("Unit")}</th></tr></thead>
             <tbody>
               {data?.registers.map((r) => {
                 const raw = r.name === "WSET"
@@ -106,53 +125,55 @@ export function System({ live }: { live: Telemetry | null }) {
         </div>
       </Panel>
 
-      <Panel title="Data feed" code={feed?.source.toUpperCase() ?? "---"} area="feed"
+      <Panel title={t("Data feed")} code={feed?.source.toUpperCase() ?? "---"} area="feed"
         status={feed ? (feed.quality.ok ? "on" : "fault") : "off"}
-        right={<button type="button" className="btn" onClick={refresh}>Refresh</button>}>
+        right={<button type="button" className="btn" onClick={refresh}>{t("Refresh")}</button>}>
         <dl className="kv">
-          <dt>Source</dt><dd>{feed?.source.toUpperCase() ?? "---"}</dd>
-          <dt>ENTSO-E token</dt><dd>{feed?.entsoe_token ? "SET" : "NOT SET · USING SMARD"}</dd>
-          <dt>Last fetch</dt><dd>{stamp(feed?.last_fetch)}</dd>
-          <dt>Daily job</dt><dd>{feed?.daily_job.detail.toUpperCase() ?? "---"}</dd>
-          <dt>Job last run</dt><dd>{stamp(feed?.daily_job.last_run)}</dd>
-          <dt>Last {feed?.window_days ?? "--"} days</dt>
-          <dd>{num(feed?.quality.rows)} ROWS</dd>
-          <dt>Gaps</dt>
+          <dt>{t("Source")}</dt><dd>{feed?.source.toUpperCase() ?? "---"}</dd>
+          <dt>{t("ENTSO-E token")}</dt>
+          <dd>{t(feed?.entsoe_token ? "SET" : "NOT SET · USING SMARD")}</dd>
+          <dt>{t("Last fetch")}</dt><dd>{stamp(feed?.last_fetch, t)}</dd>
+          <dt>{t("Daily job")}</dt>
+          <dd>{feed ? t(feed.daily_job.detail).toUpperCase() : "---"}</dd>
+          <dt>{t("Job last run")}</dt><dd>{stamp(feed?.daily_job.last_run, t)}</dd>
+          <dt>{t("Last {n} days", { n: feed?.window_days ?? "--" })}</dt>
+          <dd>{num(feed?.quality.rows)} {t("ROWS")}</dd>
+          <dt>{t("Gaps")}</dt>
           <dd className={feed?.quality.gaps.length ? "alert" : ""}>{feed?.quality.gaps.length ?? "---"}</dd>
-          <dt>Duplicates</dt>
+          <dt>{t("Duplicates")}</dt>
           <dd className={feed?.quality.duplicates.length ? "alert" : ""}>
             {feed?.quality.duplicates.length ?? "---"}</dd>
         </dl>
-        {feed?.error && <p className="banner" role="alert">Fetch failed: {feed.error}</p>}
+        {feed?.error && <p className="banner" role="alert">{t("Fetch failed: {e}", { e: feed.error })}</p>}
         {feed?.quality.gaps.slice(0, 4).map((g) => (
-          <p key={g.start} className="note">GAP {stamp(g.start)} → {stamp(g.end)}</p>
+          <p key={g.start} className="note">{t("GAP")} {stamp(g.start, t)} → {stamp(g.end, t)}</p>
         ))}
         <div className="controls" style={{ marginTop: 12 }}>
           <button type="button" className="btn" disabled={busy} onClick={() => act(api.fetchNow)}>
-            Fetch next day now
+            {t("Fetch next day now")}
           </button>
         </div>
         {error && <p className="banner" role="alert">{error}</p>}
       </Panel>
 
-      <Panel title="Fault and dispatch log" code={`${safety.length} SAFETY EVENTS`} area="log"
+      <Panel title={t("Fault and dispatch log")} code={`${safety.length} ${t("SAFETY EVENTS")}`} area="log"
         status={safety.length ? "fault" : undefined}>
-        <div className="table-wrap" tabIndex={0} role="region" aria-label="Fault and dispatch log">
+        <div className="table-wrap" tabIndex={0} role="region" aria-label={t("Fault and dispatch log")}>
           <table>
-            <thead><tr><th>Time (sim)</th><th>Kind</th><th>Reason</th><th>Setpoint kW</th>
-              <th>Measured kW</th><th>SoC %</th></tr></thead>
+            <thead><tr><th>{t("Time (sim)")}</th><th>{t("Kind")}</th><th>{t("Reason")}</th>
+              <th>{t("Setpoint kW")}</th><th>{t("Measured kW")}</th><th>{t("SoC %")}</th></tr></thead>
             <tbody>
               {data?.events.slice(0, 60).map((e, i) => (
                 <tr key={`${e.ts}-${i}`} className={e.kind === "safety" ? "fault" : undefined}>
-                  <td>{stamp(e.ts)}</td>
-                  <td>{e.kind.toUpperCase()}</td>
-                  <td>{e.reason.toUpperCase()}</td>
+                  <td>{stamp(e.ts, t)}</td>
+                  <td>{t(e.kind.toUpperCase())}</td>
+                  <td>{reasonText(e.reason, t)}</td>
                   <td>{signed(e.setpoint_kw, 1)}</td>
                   <td>{signed(e.measured_kw, 1)}</td>
                   <td>{num(e.soc == null ? null : e.soc * 100, 1)}</td>
                 </tr>
               ))}
-              {!data?.events.length && <tr><td colSpan={6}>NO EVENTS</td></tr>}
+              {!data?.events.length && <tr><td colSpan={6}>{t("NO EVENTS")}</td></tr>}
             </tbody>
           </table>
         </div>

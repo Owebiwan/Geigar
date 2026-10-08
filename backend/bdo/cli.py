@@ -67,15 +67,19 @@ def optimize(day: Annotated[str | None, typer.Argument()] = None, config: Config
 def backtest(year: int = 2025, config: ConfigOpt = None,
              duration: Annotated[float | None, typer.Option(
                  help="Capacity as hours at full power (dashboard 1h/2h/4h)")] = None,
+             markets: Annotated[bool, typer.Option(
+                 help="Also sell FCR and aFRR capacity (needs ENTSOE_TOKEN)")] = False,
              ) -> None:
     """Replay a full year and write CSV, JSON and an HTML report."""
     from bdo.backtest.report import uplift_text
     from bdo.backtest.results import run_and_save
-    from bdo.backtest.sweep import scenario
+    from bdo.backtest.sweep import scenario, with_markets
 
     cfg = load_config(config)
     if duration is not None:
         cfg = scenario(cfg, duration, cfg.battery.round_trip_efficiency)
+    if markets:
+        cfg = with_markets(cfg)
     summary, out = run_and_save(cfg, year)
     h = summary["headline"]
     typer.echo(f"{year}: optimizer {h['optimizer_eur']:,.0f} EUR, naive {h['naive_eur']:,.0f} EUR, "
@@ -83,6 +87,14 @@ def backtest(year: int = 2025, config: ConfigOpt = None,
                f"{h['eur_per_mwh_capacity']:,.0f} EUR per MWh capacity")
     typer.echo(f"violations={len(summary['violations'])} "
                f"skipped_days={len(summary['skipped_days'])} config={summary['config_hash']}")
+    m = summary["markets"]
+    if m:
+        typer.echo(f"multi-market {m['total_eur']:,.0f} EUR "
+                   f"({m['uplift_vs_day_ahead_pct']:+.0f}% vs day-ahead only, "
+                   f"{m['eur_per_mw_year']:,.0f} EUR per MW-year): energy {m['energy_eur']:,.0f}, "
+                   f"FCR {m['fcr_eur']:,.0f}, aFRR up {m['afrr_up_eur']:,.0f}, "
+                   f"aFRR down {m['afrr_dn_eur']:,.0f}, wear "
+                   f"-{m['degradation_eur'] + m['reserve_wear_eur']:,.0f}")
     typer.echo(f"written to {out}")
     if summary["violations"]:
         raise typer.Exit(1)
@@ -95,9 +107,11 @@ def init(year: int = 2025, config: ConfigOpt = None, durations: str = "1,2,4",
              help="Also train and score the price forecaster (downloads five more years)")] = False,
          ) -> None:
     """First-start job: cache prices and run the backtests the dashboard shows, if missing."""
+    import os
+
     from bdo.backtest.report import uplift_text
     from bdo.backtest.results import load_run, run_and_save
-    from bdo.backtest.sweep import scenario
+    from bdo.backtest.sweep import scenario, with_markets
 
     cfg = load_config(config)
     scenarios = [cfg] + [scenario(cfg, float(d), cfg.battery.round_trip_efficiency)
@@ -110,6 +124,14 @@ def init(year: int = 2025, config: ConfigOpt = None, durations: str = "1,2,4",
                        f"{len(summary['violations'])} violations")
         else:
             typer.echo(f"backtest {year}-{sc.hash()}: cached")
+        # Reserve prices only exist on ENTSO-E, so the multi-market run needs the token.
+        if os.environ.get("ENTSOE_TOKEN") and load_run(with_markets(sc), year) is None:
+            try:
+                mm, _ = run_and_save(with_markets(sc), year)
+                typer.echo(f"markets {year}-{sc.hash()}: "
+                           f"{mm['markets']['uplift_vs_day_ahead_pct']:+.0f}% vs day-ahead only")
+            except Exception as exc:  # noqa: BLE001 - v1 results must not depend on this
+                typer.echo(f"markets {year}-{sc.hash()}: skipped ({exc})", err=True)
         if with_forecast:
             from bdo.forecast import evaluate
 

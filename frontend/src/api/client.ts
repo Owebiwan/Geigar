@@ -14,6 +14,8 @@ export interface Telemetry {
   revenue_eur?: number;
   charged_kwh?: number;
   discharged_kwh?: number;
+  imbalance_kwh?: number;
+  imbalance_eur?: number | null;
   soc?: number | null;
   power_kw?: number | null;
   voltage_v?: number | null;
@@ -53,6 +55,7 @@ export interface Quality {
 
 export interface ScheduleResponse {
   date: string; available: boolean; reason?: string; resolution_min?: number; intervals?: number;
+  provisional?: boolean; forecast_model?: string | null;
   rows?: ScheduleRow[];
   summary?: {
     revenue_eur: number; naive_eur: number; cycles: number; price_min: number; price_max: number;
@@ -83,6 +86,16 @@ export interface ForecastResult {
   quarterly_share_pct: Record<string, Record<string, number>>;
 }
 
+export interface MarketsResult {
+  total_eur: number; day_ahead_only_eur: number; uplift_vs_day_ahead_pct: number | null;
+  eur_per_mw_year: number; energy_eur: number; degradation_eur: number; fcr_eur: number;
+  afrr_up_eur: number; afrr_dn_eur: number; reserve_wear_eur: number; fcr_kw: number;
+  afrr_up_kw: number; afrr_dn_kw: number; cycles: number; violations: number;
+  config_hash: string;
+  imbalance: { mean_abs_gap_eur_mwh: number; p95_abs_gap_eur_mwh: number } | null;
+  assumptions: { fcr_energy_hours: number; afrr_energy_hours: number };
+}
+
 export interface BacktestResponse {
   available: boolean; year: number; config_hash: string; source?: string; days?: number;
   headline?: {
@@ -97,6 +110,8 @@ export interface BacktestResponse {
   violations?: string[];
   config?: { battery: AppConfig["battery"] };
   forecast?: ForecastResult | null;
+  markets?: MarketsResult | null;
+  markets_possible?: boolean;
 }
 
 export interface ControllerEvent {
@@ -144,6 +159,8 @@ export const api = {
     request<BacktestResponse>(`/backtest?year=${year}${duration ? `&duration=${duration}` : ""}`),
   runBacktest: (year: number, duration?: number) =>
     post<BacktestResponse>(`/backtest/run?year=${year}${duration ? `&duration=${duration}` : ""}`),
+  runMarkets: (year: number, duration?: number) =>
+    post<BacktestResponse>(`/markets/run?year=${year}${duration ? `&duration=${duration}` : ""}`),
   runForecast: (year: number, duration?: number) =>
     post<BacktestResponse>(`/forecast/run?year=${year}${duration ? `&duration=${duration}` : ""}`),
   system: () => request<SystemResponse>("/system"),

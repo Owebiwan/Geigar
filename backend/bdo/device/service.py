@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from bdo.config import Config
 from bdo.data.prices import ensure_prices
+from bdo.data.reserves import ensure_imbalance_prices
 from bdo.device import registers as reg
 from bdo.device.clock import Clock
 from bdo.device.controller import Controller, ModbusDevice
@@ -27,7 +28,7 @@ from bdo.optimizer.rolling import (
     build_inputs,
     interval_at,
     needs_reoptimisation,
-    plan_day,
+    plan_rest_of_day,
     reoptimise,
 )
 from bdo.optimizer.schedule import DayInputs, Schedule
@@ -79,9 +80,17 @@ class Runner:
             return
         t = self.controller.telemetry
         soc = self.cfg.battery.soc_start if t is None else t.soc
-        self.plan = plan_day(self.cfg, self.inputs, soc)
+        # A controller started part-way through the day plans only the hours still ahead.
+        self.plan = plan_rest_of_day(self.cfg, self.inputs, now, soc)
         self.controller.load_schedule(self.plan.frame, now)
         self.controller.reset_day()
+        try:
+            # Published with a delay, so a live day usually has none yet; a replay does.
+            imbalance = ensure_imbalance_prices(start, end)
+            self.controller.imbalance_prices = None if imbalance.empty else imbalance
+        except Exception as exc:  # noqa: BLE001 - the view is optional (needs the token)
+            self.controller.imbalance_prices = None
+            log.info("controller.imbalance_prices_unavailable", reason=str(exc)[:120])
         self._replanned_in = None
         log.info("controller.schedule_loaded", day=str(day), intervals=len(self.plan.frame),
                  expected_eur=round(self.plan.cash_flow_eur, 2))

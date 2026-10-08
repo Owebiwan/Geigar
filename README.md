@@ -1,24 +1,25 @@
 # Battery Dispatch Optimizer
 
-**+37.2 % revenue against the naive rule, € 27,456 per MWh of capacity, over all 365 days of
-2025 on real German day-ahead prices, with zero constraint violations.**
+A 1 MWh / 500 kW battery scheduled against real German power prices, backtested over all of
+2025, and driven as a simulated inverter over Modbus TCP. Zero constraint violations in every
+run.
+
+| 2025, real DE-LU prices | Revenue | What it shows |
+| --- | ---: | --- |
+| Naive rule (4 cheapest / 4 dearest hours) | € 20,012 | the baseline |
+| **Optimizer, day-ahead** | **€ 27,456** | **+37.2 % from better scheduling, same information** |
+| Optimizer on its own price forecast | € 24,807 | 90.4 % survives without knowing prices in advance |
+| Optimizer, day-ahead + FCR + aFRR | € 82,158 | about € 164,000 per MW when balancing capacity is added |
 
 ![Monthly revenue 2025: optimizer vs naive rule vs persistence](docs/results-2025.svg)
 
-A 1 MWh / 500 kW battery is scheduled against DE-LU day-ahead prices with a mixed-integer
-linear program, replayed over a full year, and then driven as a simulated inverter over
-Modbus TCP. A monochrome HUD dashboard shows the loop live.
+> **These are upper bounds, and the README says where.** The optimizer rows plan against
+> prices that are already cleared; a real battery bids before the auction. The forecast row is
+> the honest version of the day-ahead number. The multi-market row counts capacity payments
+> only. Details and caveats are in the sections below.
 
-| 2025, 2 h battery | Revenue | Per MWh capacity | Full cycles |
-| --- | ---: | ---: | ---: |
-| **Optimizer** (cleared prices) | **€ 27,456** | **€ 27,456** | 416 |
-| Naive rule (4 cheapest / 4 dearest hours) | € 20,012 | € 20,012 | 283 |
-| Persistence (plans on yesterday's prices) | € 20,501 | € 20,501 | 416 |
-
-> **Read this number as an upper bound.** The optimizer plans against prices that are already
-> cleared; a real battery has to bid before the auction. The persistence row uses the simplest
-> possible forecast and keeps 74.7 % of the optimizer's revenue. A price forecaster (phase 2)
-> would land between the two.
+The dashboard is a monochrome HUD in English and German. It shows the loop live: price,
+schedule, setpoint over Modbus, measured power, revenue.
 
 ![COMMAND screen](docs/screenshots/command.png)
 
@@ -38,7 +39,7 @@ Without Docker:
 
 ```bash
 make setup      # Python 3.12 venv + npm ci
-make test       # 127 tests, coverage gate on optimizer and controller
+make test       # 163 tests, coverage gate on optimizer and controller
 make backtest   # writes data/runs/2025-<config hash>/ with CSV, JSON and report.html
 make sweep      # 1 h / 2 h / 4 h x three efficiencies
 make dev        # simulator, controller, API, dashboard on http://127.0.0.1:5173
@@ -115,6 +116,62 @@ make forecast   # needs 2020-2025 history from SMARD; the first run downloads it
 
 In the dashboard, BACKTEST shows the model as a fourth series. It is trained on first start
 by default; with `BDO_INIT_FORECAST=false` it can be started from the button there instead.
+
+## Multi-market (v2): FCR, aFRR and imbalance
+
+Day-ahead arbitrage is only part of what a battery earns. With `--markets` the optimizer also
+sells balancing capacity in the same problem: FCR (symmetric) and aFRR up and down, each as
+one constant band per 4-hour block. Capacity prices and imbalance prices come from ENTSO-E,
+so this part needs the token.
+
+| 2025, 1 MWh / 500 kW | Revenue | Per MW of power |
+| --- | ---: | ---: |
+| Day-ahead only | € 27,456 | € 54,912 |
+| **Multi-market** | **€ 82,158** | **€ 164,315** |
+| of which day-ahead energy, after wear | € 12,256 | |
+| of which FCR, after wear | € 49,127 | |
+| of which aFRR up / down | € 11,263 / € 9,512 | |
+
+Zero constraint violations over 365 days. A sold band must be deliverable at every moment:
+the day-ahead position plus the band has to fit the inverter and the grid connection, and
+enough energy must sit behind it. How much energy is the assumption that moves the result
+most:
+
+| Energy held per kW of aFRR sold | Revenue | Per MW of power |
+| --- | ---: | ---: |
+| FCR only, no aFRR | € 71,978 | € 143,957 |
+| 4 h, the whole product (default) | € 82,158 | € 164,315 |
+| 2 h | € 97,400 | € 194,800 |
+| 1 h | € 130,748 | € 261,496 |
+
+**This is an upper bound, more so than the day-ahead number.**
+
+- It uses cleared prices with perfect foresight of three auctions that close at different
+  times, FCR and aFRR before the day-ahead auction.
+- It counts capacity payments only. aFRR activation energy, its revenue and its effect on the
+  state of charge are not modelled. FCR activation is a small wear cost.
+- aFRR capacity is pay-as-bid; the published average price is assumed for every kW.
+- The minimum bid is 1 MW, so a 500 kW unit would be pooled by an aggregator.
+- The controller does not respond to grid frequency. It holds the day-ahead schedule.
+
+**Imbalance.** Energy that differs from the schedule is settled at the imbalance price
+(reBAP) instead of the day-ahead price. In 2025 the two were on average € 51 per MWh apart,
+and within € 126 in 95 % of quarter-hours. COMMAND shows the energy off schedule and, when
+the price for that day is published, the settlement effect.
+
+```bash
+bdo backtest --year 2025 --markets            # needs ENTSOE_TOKEN
+bdo backtest --year 2025 --markets --duration 4
+```
+
+## Is this a business?
+
+Not on day-ahead trading alone. € 27,456 a year on a battery that costs several hundred
+thousand euro installed does not repay it within its life. The multi-market result is in the
+range that published German revenue indices show for 2-hour batteries, roughly € 100,000 to
+€ 200,000 per MW a year, and that stacking is why batteries are being built. Costs, taxes,
+financing, grid connection charges and market fees are outside this model, and every new
+battery narrows the spreads and reserve prices it lives on.
 
 ## Design decisions
 
@@ -194,7 +251,8 @@ a dotted line. All motion stops under `prefers-reduced-motion`. On a phone only 
 
 - **Perfect foresight.** The headline is an upper bound; see the price forecaster section for
   what a model keeps of it. The dashboard and the controller still plan on cleared prices.
-- **Day-ahead only.** No intraday, no balancing markets (FCR, aFRR), no imbalance costs.
+- **Markets.** v1 is day-ahead only. v2 adds FCR and aFRR capacity as described above.
+  Continuous intraday trading, mFRR and aFRR energy are not modelled.
 - **No real market access.** Nothing here bids, trades or settles.
 - **Price source.** With an `ENTSOE_TOKEN` the code reads ENTSO-E, otherwise SMARD. For
   2025 the two agree on all 15,411 intervals and give the same backtest result. The

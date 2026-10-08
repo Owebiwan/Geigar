@@ -1,9 +1,16 @@
 const BERLIN = "Europe/Berlin";
 
+let locale = "en-US";
+/** Number and date-name locale; set by the language toggle. */
+export const setLocale = (next: string): void => {
+  locale = next;
+};
+export const currentLocale = (): string => locale;
+
 export const num = (v: number | null | undefined, digits = 0): string =>
   v == null || Number.isNaN(v)
     ? "---"
-    : v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    : v.toLocaleString(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
 export const signed = (v: number | null | undefined, digits = 0): string =>
   v == null || Number.isNaN(v) ? "---" : (v > 0 ? "+" : v < 0 ? "−" : "") + num(Math.abs(v), digits);
@@ -33,8 +40,8 @@ export const shiftDay = (day: string, by: number): string => {
 export const dayParts = (day: string) => {
   const d = new Date(`${day}T12:00:00Z`);
   return {
-    month: d.toLocaleString("en-US", { month: "long", timeZone: "UTC" }),
-    weekday: d.toLocaleString("en-US", { weekday: "long", timeZone: "UTC" }),
+    month: d.toLocaleString(locale, { month: "long", timeZone: "UTC" }),
+    weekday: d.toLocaleString(locale, { weekday: "long", timeZone: "UTC" }),
     day: d.getUTCDate(),
     year: d.getUTCFullYear(),
   };

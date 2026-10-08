@@ -33,6 +33,7 @@ test("COMMAND shows live SoC, power and revenue", async ({ page }) => {
   await expect(soc).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("img", { name: /^Power: [+−]?\d/ })).toBeVisible();
   await expect(page.getByText("Revenue today")).toBeVisible();
+  await expect(page.getByText("Off schedule")).toBeVisible();
   await expect(page.getByRole("img", { name: "Live power and state of charge" })).toBeVisible({
     timeout: 15_000 });
   const first = await page.getByRole("status").innerText();
@@ -94,7 +95,17 @@ test("BACKTEST shows the headline and switches scenarios", async ({ page }) => {
   // The forecast model is a fourth series once it has been run for this scenario.
   await expect(page.getByText("Forecast model keeps")).toBeVisible();
   await expect(page.locator(".legend").getByText("forecast model")).toBeVisible();
-  await expect(page.locator("rect.dimfill")).toHaveCount(12);
+  await expect(page.locator(".chart").filter({ hasText: "Hover a month" })
+    .locator("rect.dimfill")).toHaveCount(12);
+  // v2: revenue by market next to day-ahead only. Reserve prices need an ENTSO-E token, so
+  // a stack without one (CI) offers the run instead of showing the result.
+  const stored = await (await page.request.get("/api/backtest?year=2025&duration=2")).json();
+  if (stored.markets) {
+    await expect(page.getByRole("img", { name: /Revenue by market/ })).toBeVisible();
+    await expect(page.getByText(/vs day-ahead only/)).toBeVisible();
+  } else {
+    await expect(page.getByRole("button", { name: "Run multi-market backtest" })).toBeVisible();
+  }
   if (shots) {
     await page.waitForTimeout(1200);
     await page.screenshot({ path: `${shots}/backtest.png`, fullPage: true });
@@ -135,6 +146,32 @@ test("every screen passes the contrast check", async ({ page }) => {
     const result = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
     expect(result.violations.flatMap((v) => v.nodes.map((n) => `${tab}: ${n.html}`))).toEqual([]);
   }
+});
+
+test("language toggle switches the interface to German and back, and is remembered", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await page.getByRole("radio", { name: "DE" }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "de");
+  await expect(page.getByRole("tab", { name: "LEITSTAND" })).toBeVisible();
+  await expect(page.getByText("Erlös heute")).toBeVisible();
+  await page.getByRole("tab", { name: "BACKTEST" }).click();
+  await expect(page.getByText("Erlös Optimierer")).toBeVisible();
+  await expect(page.getByText("27.456").first()).toBeVisible(); // German number format
+  await expect(page.locator(".legend").getByText("Prognosemodell")).toBeVisible();
+  if (shots) {
+    await page.waitForTimeout(1200);
+    await page.screenshot({ path: `${shots}/backtest-de.png`, fullPage: true });
+  }
+  await page.getByRole("tab", { name: "FAHRPLAN" }).click();
+  await expect(page.getByText("Planübersicht")).toBeVisible();
+  await page.getByRole("tab", { name: "SYSTEM" }).click();
+  await expect(page.getByText("Registerwerte")).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("tab", { name: "LEITSTAND" })).toBeVisible(); // remembered
+  await page.getByRole("radio", { name: "EN" }).click();
+  await expect(page.getByRole("tab", { name: "COMMAND" })).toBeVisible();
+  await expect(page.getByText("Revenue today")).toBeVisible();
 });
 
 test("tabs are keyboard navigable", async ({ page }) => {

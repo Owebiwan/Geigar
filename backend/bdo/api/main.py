@@ -20,13 +20,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from bdo.backtest import results
-from bdo.backtest.sweep import scenario
+from bdo.backtest.sweep import scenario, with_markets
 from bdo.config import Config, data_dir, load_config
 from bdo.data.prices import cross_check, ensure_prices, resolve_source
 from bdo.data.quality import check_prices
 from bdo.data.store import PriceStore
 from bdo.device import registers as reg
 from bdo.forecast import evaluate as forecast_eval
+from bdo.forecast import live as forecast_live
 from bdo.optimizer import baselines
 from bdo.optimizer.rolling import build_inputs, plan_day
 from bdo.timeutil import BERLIN, UTC, day_bounds_utc
@@ -101,6 +102,15 @@ def schedule(day: str | None = None) -> dict[str, Any]:
         raise HTTPException(503, f"price fetch failed: {exc}") from exc
     report = check_prices(prices, start, end)
     inputs = build_inputs(cfg, prices, target)
+    provisional = None
+    if inputs is None and not report.rows:
+        # Nothing published yet: offer a plan on forecast prices, clearly marked as such.
+        try:
+            provisional = forecast_live.forecast_day(cfg, target)
+        except Exception as exc:  # noqa: BLE001 - a failed forecast is not an API error
+            log.warning("forecast.live_failed", day=str(target), error=str(exc))
+        if provisional is not None:
+            inputs = build_inputs(cfg, provisional.prices, target)
     if inputs is None:
         return {"date": target.isoformat(), "available": False, "quality": report.to_dict(),
                 "reason": "No complete day-ahead prices for this day."}
@@ -117,6 +127,8 @@ def schedule(day: str | None = None) -> dict[str, Any]:
     return {
         "date": target.isoformat(),
         "available": True,
+        "provisional": provisional is not None,
+        "forecast_model": None if provisional is None else provisional.variant,
         "resolution_min": int(inputs.dt_h * 60),
         "intervals": len(frame),
         "rows": json.loads(frame.to_json(orient="records")),
@@ -146,6 +158,14 @@ def backtest(year: int = 2025, duration: float | None = None) -> dict[str, Any]:
         return {"available": False, "year": year, "config_hash": sc.hash()}
     run["available"] = True
     run["forecast"] = forecast_eval.load_run(sc, year)
+    multi = results.load_run(with_markets(sc), year)
+    run["markets"] = None if multi is None else {
+        **multi["markets"],
+        "config_hash": multi["config_hash"],
+        "violations": len(multi["violations"]),
+        "monthly": [m for m in multi["monthly"] if m["strategy"] == "multi_market"],
+    }
+    run["markets_possible"] = bool(os.environ.get("ENTSOE_TOKEN"))
     return run
 
 
@@ -156,6 +176,16 @@ async def backtest_run(year: int = 2025, duration: float | None = None) -> dict[
         await asyncio.to_thread(results.run_and_save, sc, year)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"backtest failed: {exc}") from exc
+    return backtest(year, duration)
+
+
+@app.post("/api/markets/run")
+async def markets_run(year: int = 2025, duration: float | None = None) -> dict[str, Any]:
+    """Backtest the scenario with FCR and aFRR capacity sold alongside day-ahead trading."""
+    try:
+        await asyncio.to_thread(results.run_and_save, with_markets(_scenario(duration)), year)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"multi-market run failed: {exc}") from exc
     return backtest(year, duration)
 
 

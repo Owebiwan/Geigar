@@ -6,7 +6,9 @@ import pandas as pd
 
 from bdo.config import Config
 
-_SUMS = ["revenue_eur", "cash_flow_eur", "degradation_eur", "charge_kwh", "discharge_kwh", "cycles"]
+_SUMS = ["revenue_eur", "cash_flow_eur", "degradation_eur", "charge_kwh", "discharge_kwh", "cycles",
+         "energy_eur", "fcr_eur", "afrr_up_eur", "afrr_dn_eur", "reserve_wear_eur"]
+_MEANS = ["fcr_kw", "afrr_up_kw", "afrr_dn_kw"]
 
 
 def monthly(daily: pd.DataFrame, cfg: Config) -> pd.DataFrame:
@@ -15,6 +17,7 @@ def monthly(daily: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     out = g[_SUMS].sum()
     out["peak_import_kw"] = g["peak_import_kw"].max()
     out["spread_captured_eur_mwh"] = g["spread_captured_eur_mwh"].mean()
+    out[_MEANS] = g[_MEANS].mean()
     out = out.reset_index()
     idle_peak = out[out["strategy"] == "idle"].set_index("month")["peak_import_kw"]
     # Peak shaving only means something behind the meter of a site with its own load.
@@ -32,6 +35,7 @@ def yearly(monthly_df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     out = g[[*_SUMS, "peak_savings_eur", "total_eur"]].sum()
     out["peak_reduction_kw"] = g["peak_reduction_kw"].mean()
     out["spread_captured_eur_mwh"] = g["spread_captured_eur_mwh"].mean()
+    out[_MEANS] = g[_MEANS].mean()
     out["eur_per_kwh_capacity"] = out["total_eur"] / cfg.battery.capacity_kwh
     out["eur_per_mwh_capacity"] = out["eur_per_kwh_capacity"] * 1000.0
     return out.reset_index()
@@ -55,6 +59,25 @@ def headline(yearly_df: pd.DataFrame) -> dict[str, float | None]:
         "peak_savings_eur": float(opt_row["peak_savings_eur"]),
         "peak_reduction_kw": float(opt_row["peak_reduction_kw"]),
     }
+
+
+def markets(yearly_df: pd.DataFrame) -> dict[str, float | None] | None:
+    """Revenue of the multi-market strategy by source, against day-ahead only."""
+    if "multi_market" not in set(yearly_df["strategy"]):
+        return None
+    multi = yearly_df[yearly_df["strategy"] == "multi_market"].iloc[0]
+    base = float(yearly_df[yearly_df["strategy"] == "optimizer"].iloc[0]["total_eur"])
+    total = float(multi["total_eur"])
+    out: dict[str, float | None] = {
+        "total_eur": total,
+        "day_ahead_only_eur": base,
+        "uplift_vs_day_ahead_pct": (total / base - 1.0) * 100.0 if base > 0 else None,
+    }
+    for key in ("energy_eur", "degradation_eur", "fcr_eur", "afrr_up_eur", "afrr_dn_eur",
+                "reserve_wear_eur", "peak_savings_eur", "fcr_kw", "afrr_up_kw", "afrr_dn_kw",
+                "cycles"):
+        out[key] = float(multi[key])
+    return out
 
 
 def special_days(daily: pd.DataFrame) -> list[dict[str, object]]:

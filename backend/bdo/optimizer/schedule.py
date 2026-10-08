@@ -11,9 +11,11 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from bdo.config import BatteryConfig, SiteConfig
+from bdo.config import BatteryConfig, ReservesConfig, SiteConfig
+from bdo.timeutil import BERLIN
 
 TOL = 1e-4
+RESERVE_PRODUCTS = ("fcr", "afrr_up", "afrr_dn")
 
 
 @dataclass
@@ -25,6 +27,8 @@ class DayInputs:
     price: np.ndarray  # EUR/MWh
     load_kw: np.ndarray
     solar_kw: np.ndarray
+    # Reserve capacity prices, EUR per MW per 15 minutes. NaN = product not on offer.
+    reserve_prices: dict[str, np.ndarray] | None = None
 
     @classmethod
     def from_prices(
@@ -47,10 +51,26 @@ class DayInputs:
         )
 
     def tail(self, start: int) -> DayInputs:
+        reserve = self.reserve_prices
         return DayInputs(
             self.index[start:], self.dt_h, self.price[start:],
             self.load_kw[start:], self.solar_kw[start:],
+            None if reserve is None else {k: v[start:] for k, v in reserve.items()},
         )
+
+    def with_reserves(self, prices: pd.DataFrame | None) -> DayInputs:
+        """Attach reserve prices (indexed by 15-minute period) on this day's intervals."""
+        if prices is None or prices.empty:
+            return self
+        # An interval takes the price of the settlement period it starts in. Hourly
+        # intervals are fine: products are 4-hour blocks with one price throughout.
+        aligned = prices.reindex(self.index)
+        reserve = {name: aligned[name].to_numpy(dtype=float) for name in RESERVE_PRODUCTS}
+        return DayInputs(self.index, self.dt_h, self.price, self.load_kw, self.solar_kw, reserve)
+
+    def reserve_blocks(self) -> tuple[int, ...]:
+        """Block id per interval: reserve products are 4-hour blocks of the local day."""
+        return tuple(int(h) // 4 for h in self.index.tz_convert(BERLIN).hour)
 
 
 @dataclass
@@ -82,6 +102,8 @@ def settle(
     soc0: float,
     strategy: str,
     curtail_kw: np.ndarray | None = None,
+    reserve_kw: dict[str, np.ndarray] | None = None,
+    reserves: ReservesConfig | None = None,
 ) -> Schedule:
     """Run a requested power plan through the battery physics and price the result.
 
@@ -144,12 +166,72 @@ def settle(
     frame["grid_fee_eur"] = site.grid_fee_eur_per_mwh / 1000.0 * imp * dt
     frame["degradation_eur"] = battery.degradation_eur_per_kwh * throughput
     frame["cash_flow_eur"] = frame["energy_eur"] - frame["grid_fee_eur"] - frame["degradation_eur"]
+    for name in RESERVE_PRODUCTS:
+        frame[f"{name}_kw"] = 0.0
+        frame[f"{name}_eur"] = 0.0
+    frame["reserve_wear_eur"] = 0.0
+    if reserve_kw is not None and inputs.reserve_prices is not None and reserves is not None:
+        for name in RESERVE_PRODUCTS:
+            price = np.nan_to_num(inputs.reserve_prices[name], nan=0.0)
+            frame[f"{name}_kw"] = reserve_kw[name]
+            # EUR per MW per 15 minutes -> EUR for this interval's reserved kW.
+            frame[f"{name}_eur"] = reserve_kw[name] / 1000.0 * price * (dt / 0.25)
+        frame["reserve_wear_eur"] = (
+            battery.degradation_eur_per_kwh * reserves.fcr_throughput_kwh_per_kw_h
+            * frame["fcr_kw"] * dt
+        )
+        frame["cash_flow_eur"] += (
+            frame[[f"{n}_eur" for n in RESERVE_PRODUCTS]].sum(axis=1) - frame["reserve_wear_eur"]
+        )
     return Schedule(frame=frame, strategy=strategy)
 
 
-def check_constraints(frame: pd.DataFrame, battery: BatteryConfig, tol: float = TOL) -> list[str]:
+def _check_reserves(
+    frame: pd.DataFrame, battery: BatteryConfig, cfg: ReservesConfig, tol: float
+) -> list[str]:
+    """Sold reserve must be deliverable: enough power and enough energy at all times."""
+    out: list[str] = []
+    net = frame["discharge_kw"] - frame["charge_kw"]
+    up = frame["fcr_kw"] + frame["afrr_up_kw"]
+    down = frame["fcr_kw"] + frame["afrr_dn_kw"]
+    if (frame[[f"{n}_kw" for n in RESERVE_PRODUCTS]] < -tol).any().any():
+        out.append("negative reserve")
+    if (net + up > battery.max_discharge_kw + tol).any():
+        out.append("upward reserve exceeds free discharge power")
+    if (-net + down > battery.max_charge_kw + tol).any():
+        out.append("downward reserve exceeds free charge power")
+    need_up = (frame["fcr_kw"] * cfg.fcr_energy_hours
+               + frame["afrr_up_kw"] * cfg.afrr_energy_hours) / battery.eta_discharge
+    need_down = (frame["fcr_kw"] * cfg.fcr_energy_hours
+                 + frame["afrr_dn_kw"] * cfg.afrr_energy_hours) * battery.eta_charge
+    e_tol = tol * 10
+    for column in ("soc_start", "soc"):
+        energy = frame[column] * battery.capacity_kwh
+        if (energy - need_up < battery.soc_min * battery.capacity_kwh - e_tol).any():
+            out.append("not enough stored energy behind upward reserve")
+            break
+    for column in ("soc_start", "soc"):
+        energy = frame[column] * battery.capacity_kwh
+        if (energy + need_down > battery.soc_max * battery.capacity_kwh + e_tol).any():
+            out.append("not enough headroom behind downward reserve")
+            break
+    blocks = pd.Series(pd.DatetimeIndex(frame["ts_utc"]).tz_convert(BERLIN).hour // 4)
+    day = pd.Series(pd.DatetimeIndex(frame["ts_utc"]).tz_convert(BERLIN).date)
+    for name in RESERVE_PRODUCTS:
+        spread = frame[f"{name}_kw"].groupby([day, blocks]).agg(lambda v: v.max() - v.min())
+        if (spread > tol).any():
+            out.append(f"{name} reserve changes inside a 4-hour block")
+    return out
+
+
+def check_constraints(
+    frame: pd.DataFrame, battery: BatteryConfig, tol: float = TOL,
+    reserves: ReservesConfig | None = None,
+) -> list[str]:
     """Return a description of every physical limit a schedule breaks (NF-2)."""
     out: list[str] = []
+    if reserves is not None and "fcr_kw" in frame:
+        out += _check_reserves(frame, battery, reserves, tol)
     if (frame["charge_kw"] > battery.max_charge_kw + tol).any():
         out.append("charge power above limit")
     if (frame["discharge_kw"] > battery.max_discharge_kw + tol).any():
