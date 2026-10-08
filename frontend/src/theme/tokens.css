@@ -1,0 +1,16 @@
+/* Design tokens from the requirements. No hue anywhere except --alert. */
+:root {
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --line: rgba(255, 255, 255, 0.85);
+  --line-dim: rgba(255, 255, 255, 0.35);
+  --grid: rgba(255, 255, 255, 0.08);
+  --text: #f2f2f2;
+  --text-dim: #8a8a8a;
+  --alert: #ff3b30;
+
+  --font-display: "Orbitron", "Rajdhani", "Eurostile", system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --gap: 12px;
+  color-scheme: dark;
+}

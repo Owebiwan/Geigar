@@ -1,0 +1,46 @@
+# Default scenario: a 1 MWh / 500 kW front-of-meter battery doing day-ahead arbitrage.
+# Every parameter the optimizer, backtest, simulator and controller use lives here.
+
+battery:
+  id: BAT-01
+  capacity_kwh: 1000
+  max_charge_kw: 500
+  max_discharge_kw: 500
+  eta_charge: 0.95          # round trip = eta_charge * eta_discharge
+  eta_discharge: 0.95
+  soc_min: 0.10
+  soc_max: 0.90
+  soc_start: 0.50
+  soc_end: 0.50             # required SoC at the end of every day
+  degradation_eur_per_kwh: 0.01   # per kWh of throughput (charge + discharge)
+  max_cycles_per_day: 2.0   # full equivalent cycles; null disables the limit
+  grid_import_kw: 500
+  grid_export_kw: 500
+
+site:
+  load_annual_kwh: 0        # 0 = no site load (pure arbitrage)
+  load_profile: G0
+  demand_charge_eur_per_kw_year: 0
+  grid_fee_eur_per_mwh: 0   # charged on every MWh imported from the grid
+  solar_kwp: 0
+  latitude: 52.52
+  longitude: 13.40
+
+market:
+  zone: DE-LU
+  source: auto              # auto = ENTSO-E when ENTSOE_TOKEN is set, else SMARD
+  timezone: Europe/Berlin
+
+controller:
+  modbus_host: 127.0.0.1
+  modbus_port: 5020
+  modbus_unit: 1
+  poll_seconds: 2
+  comm_timeout_seconds: 30
+  schedule_stale_seconds: 129600   # 36 h: a schedule older than this is not trusted
+  soc_drift_tolerance: 0.05        # re-optimise when |measured - planned| exceeds this
+
+simulator:
+  noise_power_fraction: 0.01
+  noise_soc_fraction: 0.002
+  seed: 7

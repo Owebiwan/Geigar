@@ -1,0 +1,71 @@
+# One command brings up data, optimizer, simulator, controller and dashboard:
+#   docker compose up        -> http://localhost:8080
+#
+# BDO_SPEED=720 with BDO_REPLAY_DAY replays that day in about two minutes, on a loop.
+# BDO_SPEED=1 with an empty BDO_REPLAY_DAY runs live against today's prices.
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment: &backend-env
+    ENTSOE_TOKEN: ${ENTSOE_TOKEN:-}
+    BDO_SPEED: ${BDO_SPEED:-720}
+    BDO_REPLAY_DAY: ${BDO_REPLAY_DAY-2025-10-14}
+    BDO_INIT_FORECAST: ${BDO_INIT_FORECAST:-true}
+  volumes:
+    - bdo-data:/data
+  restart: unless-stopped
+
+services:
+  # Caches a year of prices and runs the backtests the dashboard shows. Exits when done.
+  data:
+    <<: *backend
+    command: ["bdo", "init", "--year", "2025"]
+    restart: "no"
+
+  simulator:
+    <<: *backend
+    command: ["sh", "-c", "exec bdo sim --speed \"$$BDO_SPEED\""]
+
+  controller:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      BDO_MODBUS_HOST: simulator
+    command:
+      - sh
+      - -c
+      - exec bdo control --speed "$$BDO_SPEED" $${BDO_REPLAY_DAY:+--day "$$BDO_REPLAY_DAY"}
+    depends_on:
+      data:
+        condition: service_completed_successfully
+      simulator:
+        condition: service_started
+
+  api:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      BDO_CONTROLLER_URL: http://controller:8100
+    command: ["bdo", "serve"]
+    depends_on:
+      data:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build: ./frontend
+    ports:
+      - "${BDO_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  bdo-data:

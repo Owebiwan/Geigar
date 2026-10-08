@@ -1,0 +1,46 @@
+# Commercial-site scenario: the same battery behind the meter of a site with
+# its own load and rooftop solar. Adds peak shaving (OP-4) and solar charging (OP-5).
+
+battery:
+  id: BAT-01
+  capacity_kwh: 1000
+  max_charge_kw: 500
+  max_discharge_kw: 500
+  eta_charge: 0.95
+  eta_discharge: 0.95
+  soc_min: 0.10
+  soc_max: 0.90
+  soc_start: 0.50
+  soc_end: 0.50
+  degradation_eur_per_kwh: 0.01
+  max_cycles_per_day: 2.0
+  grid_import_kw: 1200
+  grid_export_kw: 800
+
+site:
+  load_annual_kwh: 3000000
+  load_profile: G0
+  demand_charge_eur_per_kw_year: 120
+  grid_fee_eur_per_mwh: 0
+  solar_kwp: 400
+  latitude: 52.52
+  longitude: 13.40
+
+market:
+  zone: DE-LU
+  source: auto
+  timezone: Europe/Berlin
+
+controller:
+  modbus_host: 127.0.0.1
+  modbus_port: 5020
+  modbus_unit: 1
+  poll_seconds: 2
+  comm_timeout_seconds: 30
+  schedule_stale_seconds: 129600
+  soc_drift_tolerance: 0.05
+
+simulator:
+  noise_power_fraction: 0.01
+  noise_soc_fraction: 0.002
+  seed: 7
