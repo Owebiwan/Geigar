@@ -6,7 +6,7 @@ run.
 
 | 2025, real DE-LU prices | Revenue | What it shows |
 | --- | ---: | --- |
-| Naive rule (4 cheapest / 4 dearest hours) | € 20,012 | the baseline |
+| Naive rule (4 cheapest / 4 most expensive hours) | € 20,012 | the baseline |
 | **Optimizer, day-ahead** | **€ 27,456** | **+37.2 % from better scheduling, same information** |
 | Optimizer on its own price forecast | € 24,807 | 90.4 % survives without knowing prices in advance |
 | Optimizer, day-ahead + FCR + aFRR | € 82,158 | about € 164,000 per MW when balancing capacity is added |
@@ -67,7 +67,7 @@ make e2e        # Playwright against the running stack
 | 4 h | 90 % | € 44,582 | € 40,207 | +10.9 % | 22,291 |
 
 Longer batteries earn more in total and less per MWh, and the naive rule catches up: with four
-hours of storage, "four cheapest, four dearest" is already close to the best plan.
+hours of storage, "four cheapest, four most expensive" is already close to the best plan.
 
 ### Special days in 2025
 

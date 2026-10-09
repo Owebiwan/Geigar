@@ -92,6 +92,7 @@ class Runner:
             self.controller.imbalance_prices = None
             log.info("controller.imbalance_prices_unavailable", reason=str(exc)[:120])
         self._replanned_in = None
+        self.reoptimisations = 0  # counted per day, like the other readouts
         log.info("controller.schedule_loaded", day=str(day), intervals=len(self.plan.frame),
                  expected_eur=round(self.plan.cash_flow_eur, 2))
 

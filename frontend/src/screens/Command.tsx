@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type AppConfig, type Telemetry } from "../api/client";
 import type { Sample } from "../api/useTelemetry";
 import { PowerSlider, Segmented, StopButton } from "../components/Controls";
@@ -23,6 +23,31 @@ const REASONS: Record<string, string> = {
  *  numerals always fit their tile. */
 const tight = (v: number | null | undefined) => (v != null && Math.abs(v) >= 100 ? 0 : 1);
 
+const MIN_WAVE = 190;
+
+/** Height for the telemetry chart so the panel fills the screen below the gauges. */
+function useFillHeight(): [React.RefObject<HTMLDivElement>, number] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(MIN_WAVE);
+  useEffect(() => {
+    const measure = () => {
+      if (!ref.current) return;
+      const top = ref.current.getBoundingClientRect().top + window.scrollY;
+      // Room for the readout line, time axis, legend and panel padding below the plot.
+      setHeight(Math.max(MIN_WAVE, Math.min(900, window.innerHeight - top - 120)));
+    };
+    measure();
+    // The gauges above settle after fonts load, so measure once more.
+    const later = setTimeout(measure, 600);
+    window.addEventListener("resize", measure);
+    return () => {
+      clearTimeout(later);
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  return [ref, height];
+}
+
 interface Props {
   live: Telemetry | null;
   history: Sample[];
@@ -32,6 +57,8 @@ interface Props {
 export function Command({ live, history, config }: Props) {
   const t = useT();
   const [error, setError] = useState<string | null>(null);
+  const [waveRef, waveHeight] = useFillHeight();
+  const powerHeight = Math.round((waveHeight - 14) * 0.62);
   const reason = t(REASONS[live?.reason ?? ""] ?? live?.reason ?? "---");
   const b = config?.battery;
   const max = b?.max_charge_kw ?? 500;
@@ -120,15 +147,16 @@ export function Command({ live, history, config }: Props) {
       </Panel>
 
       <Panel title={t("Live telemetry")} code={`${history.length} ${t("SAMPLES")}`} area="wave" grid>
+        <div ref={waveRef}>
         {history.length > 1 ? (
           <>
             <TimeSeriesChart label={t("Live power and state of charge")} step={0} scan
               x={history.map((s) => s.t)} formatX={berlinTime}
               panes={[
-                { id: "p", label: t("Power"), unit: "kW", height: 120, kind: "line", digits: 0,
+                { id: "p", label: t("Power"), unit: "kW", height: powerHeight, kind: "line", digits: 0,
                   domain: [-maxDis, max], values: history.map((s) => s.power_kw),
                   compare: { label: t("Setpoint"), values: history.map((s) => s.setpoint_kw) } },
-                { id: "s", label: t("SoC"), unit: "%", height: 70, kind: "line", digits: 1, scale: 100,
+                { id: "s", label: t("SoC"), unit: "%", height: waveHeight - 14 - powerHeight, kind: "line", digits: 1, scale: 100,
                   domain: [0, 100], values: history.map((s) => s.soc) },
               ]} />
             <div className="legend">
@@ -137,6 +165,7 @@ export function Command({ live, history, config }: Props) {
             </div>
           </>
         ) : <p className="note">{t("WAITING FOR TELEMETRY…")}</p>}
+        </div>
       </Panel>
     </div>
   );

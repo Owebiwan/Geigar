@@ -71,7 +71,8 @@ test("SCHEDULE plots a day and zooms to 15-minute resolution", async ({ page }) 
   await open(page, "SCHEDULE");
   await page.locator("#day-pick").fill("2025-10-14");
   const chart = page.getByRole("img", { name: /Price, dispatch and state of charge/ });
-  await expect(chart).toBeVisible();
+  // The first SCHEDULE request of a day also computes tomorrow's provisional forecast.
+  await expect(chart).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("INT 15M").first()).toBeVisible();
   await expect(page.getByRole("row")).toHaveCount(97); // header + 96 intervals
   await page.getByRole("button", { name: "1 h" }).click();
