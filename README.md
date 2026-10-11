@@ -4,6 +4,8 @@ A 1 MWh / 500 kW battery scheduled against real German power prices, backtested 
 2025, and driven as a simulated inverter over Modbus TCP. Zero constraint violations in every
 run.
 
+**[Watch the 2-minute demo](https://youtu.be/YaK6x80I544)**
+
 | 2025, real DE-LU prices | Revenue | What it shows |
 | --- | ---: | --- |
 | Naive rule (4 cheapest / 4 most expensive hours) | € 20,012 | the baseline |
@@ -275,3 +277,7 @@ dabei keine technische Grenze. Der Fahrplan wird anschließend über Modbus TCP 
 simulierten Wechselrichter übergeben; eine Sicherheitsschicht setzt die Leistung bei Störung,
 Verbindungsverlust oder veraltetem Fahrplan auf 0 kW. Das Ergebnis ist eine Obergrenze, weil
 gegen bereits bekannte Preise optimiert wird.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
