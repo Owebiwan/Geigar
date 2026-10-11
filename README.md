@@ -4,7 +4,7 @@ A 1 MWh / 500 kW battery scheduled against real German power prices, backtested 
 2025, and driven as a simulated inverter over Modbus TCP. Zero constraint violations in every
 run.
 
-**[Watch the 2-minute demo](https://youtu.be/YaK6x80I544)**
+**[Watch the 3-minute demo](https://youtu.be/YaK6x80I544)**
 
 | 2025, real DE-LU prices | Revenue | What it shows |
 | --- | ---: | --- |
